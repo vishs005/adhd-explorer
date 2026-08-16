@@ -1,0 +1,52 @@
+state,state_name,rate_pct
+AK,Alaska,2.0
+AL,Alabama,2.3
+AR,Arkansas,3.1
+AZ,Arizona,1.6
+CA,California,1.5
+CO,Colorado,1.9
+CT,Connecticut,2.8
+DC,District of Columbia,2.5
+DE,Delaware,2.6
+FL,Florida,2.3
+GA,Georgia,2.4
+HI,Hawaii,1.4
+IA,Iowa,2.7
+ID,Idaho,1.8
+IL,Illinois,2.7
+IN,Indiana,2.9
+KS,Kansas,2.7
+KY,Kentucky,4.4
+LA,Louisiana,4.3
+MA,Massachusetts,2.5
+MD,Maryland,2.4
+ME,Maine,3.0
+MI,Michigan,3.0
+MN,Minnesota,2.3
+MO,Missouri,2.1
+MS,Mississippi,6.3
+MT,Montana,3.9
+NC,North Carolina,3.0
+ND,North Dakota,2.6
+NE,Nebraska,2.0
+NH,New Hampshire,3.6
+NJ,New Jersey,1.7
+NM,New Mexico,1.9
+NV,Nevada,1.7
+NY,New York,2.3
+OH,Ohio,2.8
+OK,Oklahoma,3.0
+OR,Oregon,4.0
+PA,Pennsylvania,2.2
+RI,Rhode Island,3.5
+SC,South Carolina,3.0
+SD,South Dakota,2.4
+TN,Tennessee,2.2
+TX,Texas,2.0
+UT,Utah,2.1
+VA,Virginia,2.1
+VT,Vermont,2.4
+WA,Washington,1.8
+WI,Wisconsin,2.5
+WV,West Virginia,2.5
+WY,Wyoming,2.7
