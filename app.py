@@ -80,12 +80,43 @@ def load_treatment_range():
     return pd.read_csv("data/treatment_state_range.csv")
 
 
+@st.cache_data
+def load_state_treatment():
+    return pd.read_csv("data/state_adhd_treatment.csv")
+
+
+# Sequential single-hue ramp (blue, light -> dark) for choropleth magnitude
+# encoding -- per the dataviz skill's palette reference.
+SEQUENTIAL_BLUE = [
+    [0.0, "#cde2fb"], [0.17, "#9ec5f4"], [0.33, "#6da7ec"], [0.5, "#3987e5"],
+    [0.67, "#256abf"], [0.83, "#184f95"], [1.0, "#0d366b"],
+]
+
 PREVALENCE_TITLES = {
     "sex": "Diagnosis rate by sex",
     "race_ethnicity": "Diagnosis rate by race / ethnicity",
     "severity": "Severity among diagnosed children",
     "co_occurring": "Co-occurring conditions among diagnosed children",
 }
+
+
+def state_choropleth_chart(theme, state_df, z_col="rate_pct", label_col="state_name",
+                            title="% of children receiving ADD/ADHD treatment, by state",
+                            colorbar_title="% of children"):
+    fig = go.Figure(
+        go.Choropleth(
+            locations=state_df["state"], locationmode="USA-states", z=state_df[z_col],
+            colorscale=SEQUENTIAL_BLUE, colorbar_title=colorbar_title,
+            text=state_df[label_col] if label_col in state_df.columns else None,
+            hovertemplate="%{text}: %{z:g}<extra></extra>" if label_col in state_df.columns else "%{location}: %{z:g}<extra></extra>",
+            marker_line_color=theme["GRIDLINE"],
+        )
+    )
+    fig.update_layout(
+        geo=dict(scope="usa", bgcolor=theme["SURFACE"], lakecolor=theme["SURFACE"]),
+        title=title, **theme["BASE_LAYOUT"],
+    )
+    return fig
 
 
 def prevalence_bar_chart(theme, df_subset, title, x_col="value_pct", y_col="subgroup", suffix="%"):
@@ -165,26 +196,38 @@ def render_prevalence_tab():
     st.download_button("Download this data as CSV", combined_csv, file_name="adhd_prevalence_data.csv", mime="text/csv")
 
     st.divider()
-    st.markdown("**Want a state-by-state map?**")
-    st.write(
-        "This app ships with national + demographic figures only, since a full 50-state "
-        "dataset requires either the free NSCH data query tool "
-        "([childhealthdata.org](https://www.childhealthdata.org)) or the "
-        "[America's Health Rankings API](https://developers.americashealthrankings.org/) "
-        "(free signup). If you get a CSV with `state` and `rate` columns, upload it below "
-        "and this tab will render a choropleth map."
+    st.markdown("**State-by-state map -- % of children currently receiving ADD/ADHD treatment**")
+    st.caption(
+        "This is a *different* measure from the treatment-range chart above: it's the share of "
+        "**all** children in a state receiving ADD/ADHD treatment (diagnosed or not), not the share "
+        "*among already-diagnosed* children. Don't compare the two numbers directly -- they use "
+        "different denominators. Source: America's Health Rankings, 2023-2024 (National Survey of "
+        "Children's Health)."
     )
-    state_file = st.file_uploader("Upload state-level CSV (columns: state, rate)", type="csv", key="state_upload")
-    if state_file is not None:
-        state_df = pd.read_csv(state_file)
-        fig = go.Figure(
-            go.Choropleth(
-                locations=state_df["state"], locationmode="USA-states", z=state_df["rate"],
-                colorscale=[[0, "#cde2fb"], [1, "#0d366b"]], colorbar_title="Rate (%)",
-            )
+    state_df = load_state_treatment()
+    fig = state_choropleth_chart(theme, state_df)
+    st.plotly_chart(fig, use_container_width=True)
+    st.caption(
+        f"Highest: {state_df.loc[state_df.rate_pct.idxmax(), 'state_name']} "
+        f"({state_df.rate_pct.max():g}%) -- Lowest: {state_df.loc[state_df.rate_pct.idxmin(), 'state_name']} "
+        f"({state_df.rate_pct.min():g}%) -- National average: 3.4%."
+    )
+    st.download_button("Download state map data as CSV", state_df.to_csv(index=False).encode(),
+                        file_name="adhd_state_treatment.csv", mime="text/csv")
+
+    with st.expander("Use your own state-level data instead"):
+        st.write(
+            "Upload a CSV with `state` (2-letter code) and `rate` columns to override the map above "
+            "with different data -- for example a different year, or a different measure from "
+            "[childhealthdata.org](https://www.childhealthdata.org) or the "
+            "[America's Health Rankings API](https://developers.americashealthrankings.org/)."
         )
-        fig.update_layout(geo_scope="usa", title="ADHD rate by state", **theme["BASE_LAYOUT"])
-        st.plotly_chart(fig, use_container_width=True)
+        custom_file = st.file_uploader("Upload state-level CSV (columns: state, rate)", type="csv", key="state_upload")
+        if custom_file is not None:
+            custom_df = pd.read_csv(custom_file)
+            fig = state_choropleth_chart(theme, custom_df, z_col="rate", label_col="state",
+                                          title="Custom state-level map", colorbar_title="Rate")
+            st.plotly_chart(fig, use_container_width=True)
 
 
 # ---------------------------------------------------------------------------
@@ -669,16 +712,18 @@ CHART_TOOL = {
         "properties": {
             "source": {
                 "type": "string",
-                "enum": ["prevalence", "health"],
+                "enum": ["prevalence", "health", "state_map"],
                 "description": "'prevalence' for national CDC/NSCH demographic charts, "
-                                "'health' for the loaded adult ADHD-vs-control comparison data.",
+                                "'health' for the loaded adult ADHD-vs-control comparison data, "
+                                "'state_map' for the US choropleth of ADD/ADHD treatment rate by state.",
             },
             "metric": {
                 "type": "string",
                 "description": (
                     "For source='prevalence': one of sex, race_ethnicity, severity, co_occurring. "
                     "For source='health': the exact column name of a metric shown in the health "
-                    "data table (e.g. ASRS, ACC__mean, 'Adhd TScore Omissions')."
+                    "data table (e.g. ASRS, ACC__mean, 'Adhd TScore Omissions'). "
+                    "For source='state_map': not used, pass an empty string."
                 ),
             },
         },
@@ -688,7 +733,7 @@ CHART_TOOL = {
 
 SUGGESTED_QUESTIONS = [
     "What's the ADHD diagnosis rate by sex?",
-    "Which treatment type varies most across states?",
+    "Which state has the highest treatment rate?",
     "Compare ASRS scores between ADHD and control",
     "What does WURS measure?",
 ]
@@ -705,6 +750,14 @@ def build_data_context() -> str:
 
     treatment = load_treatment_range()
     parts.append("## Treatment rate range across US states (2022)\n" + treatment.to_markdown(index=False))
+
+    state_df = load_state_treatment()
+    parts.append(
+        "## % of children receiving ADD/ADHD treatment, by state (America's Health Rankings, 2023-2024)\n"
+        "Note: this is share of ALL children (diagnosed or not), a different denominator from the "
+        "treatment-range table above which is share AMONG diagnosed children -- don't compare the two directly.\n\n"
+        + state_df.to_markdown(index=False)
+    )
 
     merged = st.session_state.get("health_merged")
     if merged is not None:
@@ -745,6 +798,14 @@ def execute_chart_tool(theme, tool_input):
         d = prevalence[prevalence.category == metric]
         fig = prevalence_bar_chart(theme, d, PREVALENCE_TITLES[metric])
         return fig, f"Rendered a bar chart: {PREVALENCE_TITLES[metric]}."
+
+    if source == "state_map":
+        state_df = load_state_treatment()
+        fig = state_choropleth_chart(theme, state_df)
+        top = state_df.loc[state_df.rate_pct.idxmax()]
+        bottom = state_df.loc[state_df.rate_pct.idxmin()]
+        return fig, (f"Rendered the state choropleth map. Highest: {top['state_name']} ({top['rate_pct']:g}%). "
+                     f"Lowest: {bottom['state_name']} ({bottom['rate_pct']:g}%). National average: 3.4%.")
 
     if source == "health":
         merged = st.session_state.get("health_merged")
