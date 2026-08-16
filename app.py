@@ -154,61 +154,102 @@ def render_prevalence_tab():
 
 
 # ---------------------------------------------------------------------------
-# Tab 2: Adult Health & Activity (Kaggle upload-driven)
+# Tab 2: Adult Health & Activity (Kaggle "HYPERAKTIV" upload-driven)
 # ---------------------------------------------------------------------------
+# Curated, human-readable shortlists -- the raw files have 780+ auto-generated
+# feature columns (tsfresh) and 360 raw CPT trial columns; we surface the
+# interpretable summary columns instead of dumping everything in a dropdown.
+ACTIVITY_FEATURE_CANDIDATES = [
+    "ACC__mean", "ACC__standard_deviation", "ACC__maximum", "ACC__minimum",
+    "ACC__sum_values", "ACC__abs_energy", "ACC__median", "ACC__variance",
+]
+CPT_FEATURE_CANDIDATES = [
+    "Adhd TScore Omissions", "Adhd TScore Commissions", "Adhd TScore HitRT",
+    "Adhd TScore VarSE", "Adhd TScore DPrime", "Adhd Confidence Index",
+]
+CLINICAL_SCALE_CANDIDATES = ["WURS", "ASRS", "MADRS", "HADS_A", "HADS_D"]
+
+
 def render_health_tab():
     st.subheader("Adult Health & Activity")
-    st.caption("Dataset: Kaggle - 'ADHD Diagnosis Data' (health, activity, and heart-rate data from adults).")
-
-    st.write(
-        "This dataset isn't bundled with the app -- download it from "
-        "[Kaggle](https://www.kaggle.com/datasets/arashnic/adhd-diagnosis-data) "
-        "(free account required, no API key needed for a manual download) and upload the CSV below."
+    st.caption(
+        "Dataset: Kaggle - 'ADHD Diagnosis Data' (the HYPERAKTIV dataset -- clinical info, "
+        "wrist activity features, and CPT-II attention-test scores for adults with ADHD and controls)."
     )
-    f = st.file_uploader("Upload the ADHD health/activity CSV", type="csv", key="health_upload")
-    if f is None:
-        st.info("Once uploaded, you'll be able to pick a group column (e.g. ADHD vs. control) and compare "
-                "heart rate / activity distributions and trends over time.")
+    st.write(
+        "Download from [Kaggle](https://www.kaggle.com/datasets/arashnic/adhd-diagnosis-data) "
+        "(free account, no API key needed) and upload the files below. `patient_info.csv` is "
+        "required -- it has the ADHD / control label. `features.csv` and the CPT CSV are optional "
+        "extras that unlock more metrics to compare. Skip the `activity_data/`, `hrv_data/`, and "
+        "`hyperaktiv_with_controls/` folders -- those hold raw per-second sensor data (500MB+) that "
+        "this tab doesn't need."
+    )
+
+    col1, col2, col3 = st.columns(3)
+    pi_file = col1.file_uploader("patient_info.csv (required)", type="csv", key="pi_upload")
+    feat_file = col2.file_uploader("features.csv (optional)", type="csv", key="feat_upload")
+    cpt_file = col3.file_uploader("CPT CSV (optional)", type="csv", key="cpt_upload")
+
+    if pi_file is None:
+        st.info("Upload at least `patient_info.csv` to get started -- it's small (under 1MB) and "
+                 "holds the ADHD/control label plus clinical scale scores (WURS, ASRS, MADRS, HADS).")
         return
 
-    df = pd.read_csv(f)
-    st.success(f"Loaded {len(df):,} rows, {len(df.columns)} columns.")
-    with st.expander("Preview data"):
-        st.dataframe(df.head(50), use_container_width=True)
+    pi = pd.read_csv(pi_file, sep=";")
+    if "ADHD" not in pi.columns or "ID" not in pi.columns:
+        st.error("This doesn't look like patient_info.csv -- expected an 'ID' and 'ADHD' column.")
+        return
+    pi["Group"] = pi["ADHD"].map({1: "ADHD", 0: "Control"})
 
-    numeric_cols = df.select_dtypes("number").columns.tolist()
-    all_cols = df.columns.tolist()
-    if not numeric_cols:
-        st.warning("No numeric columns detected -- can't chart this file automatically.")
+    merged = pi.copy()
+    metric_options = {}  # display label -> column name
+    for c in CLINICAL_SCALE_CANDIDATES:
+        if c in merged.columns:
+            metric_options[f"Clinical scale: {c}"] = c
+
+    if feat_file is not None:
+        feat = pd.read_csv(feat_file, sep=";")
+        present = [c for c in ACTIVITY_FEATURE_CANDIDATES if c in feat.columns]
+        if present:
+            merged = merged.merge(feat[["ID"] + present], on="ID", how="inner")
+            for c in present:
+                metric_options[f"Wrist activity: {c.replace('ACC__', '')}"] = c
+        else:
+            st.warning("features.csv was uploaded but none of the expected ACC__ columns were found.")
+
+    if cpt_file is not None:
+        cpt = pd.read_csv(cpt_file, sep=";")
+        present = [c for c in CPT_FEATURE_CANDIDATES if c in cpt.columns]
+        if present:
+            merged = merged.merge(cpt[["ID"] + present], on="ID", how="inner")
+            for c in present:
+                metric_options[f"Attention test (CPT-II): {c}"] = c
+        else:
+            st.warning("The CPT CSV was uploaded but none of the expected summary-score columns were found.")
+
+    n_adhd = (merged["Group"] == "ADHD").sum()
+    n_control = (merged["Group"] == "Control").sum()
+    c1, c2 = st.columns(2)
+    c1.metric("ADHD patients (matched across uploaded files)", n_adhd)
+    c2.metric("Controls (matched across uploaded files)", n_control)
+
+    with st.expander("Preview merged data"):
+        st.dataframe(merged.head(50), use_container_width=True)
+
+    if not metric_options:
+        st.warning("No known metric columns found -- double check you uploaded the right files.")
         return
 
-    col1, col2 = st.columns(2)
-    metric_col = col1.selectbox("Metric to visualize", numeric_cols)
-    group_col = col2.selectbox("Group by (e.g. ADHD vs. control)", ["(none)"] + all_cols)
+    label = st.selectbox("Metric to compare", list(metric_options.keys()))
+    metric_col = metric_options[label]
 
-    if group_col != "(none)" and df[group_col].nunique() <= 8:
-        groups = df[group_col].dropna().unique().tolist()
-        fig = go.Figure()
-        for i, g in enumerate(groups):
-            fig.add_trace(go.Box(y=df.loc[df[group_col] == g, metric_col], name=str(g),
-                                  marker_color=CATEGORICAL[i % len(CATEGORICAL)]))
-        fig.update_layout(title=f"{metric_col} by {group_col}", **BASE_LAYOUT)
-        style_axes(fig)
-        st.plotly_chart(fig, use_container_width=True)
-    else:
-        fig = go.Figure(go.Histogram(x=df[metric_col], marker_color=BLUE))
-        fig.update_layout(title=f"Distribution of {metric_col}", **BASE_LAYOUT)
-        style_axes(fig)
-        st.plotly_chart(fig, use_container_width=True)
-
-    time_cols = [c for c in all_cols if "time" in c.lower() or "date" in c.lower()]
-    if time_cols:
-        t_col = st.selectbox("Time column for a trend line", time_cols)
-        d = df[[t_col, metric_col]].dropna().sort_values(t_col)
-        fig = go.Figure(go.Scatter(x=d[t_col], y=d[metric_col], mode="lines", line=dict(color=BLUE, width=2)))
-        fig.update_layout(title=f"{metric_col} over time", **BASE_LAYOUT)
-        style_axes(fig)
-        st.plotly_chart(fig, use_container_width=True)
+    fig = go.Figure()
+    for i, g in enumerate(["ADHD", "Control"]):
+        vals = merged.loc[merged["Group"] == g, metric_col].dropna()
+        fig.add_trace(go.Box(y=vals, name=g, marker_color=CATEGORICAL[i], boxmean=True))
+    fig.update_layout(title=f"{label} -- ADHD vs. Control", **BASE_LAYOUT)
+    style_axes(fig)
+    st.plotly_chart(fig, use_container_width=True)
 
 
 # ---------------------------------------------------------------------------
