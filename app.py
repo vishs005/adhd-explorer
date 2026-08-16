@@ -17,6 +17,12 @@ import pandas as pd
 import plotly.graph_objects as go
 import streamlit as st
 
+try:
+    import anthropic
+    ANTHROPIC_AVAILABLE = True
+except ImportError:
+    ANTHROPIC_AVAILABLE = False
+
 # ---------------------------------------------------------------------------
 # Palette (validated categorical order -- see dataviz skill reference)
 # ---------------------------------------------------------------------------
@@ -236,6 +242,9 @@ def render_health_tab():
     with st.expander("Preview merged data"):
         st.dataframe(merged.head(50), use_container_width=True)
 
+    st.session_state["health_merged"] = merged
+    st.session_state["health_metric_options"] = metric_options
+
     if not metric_options:
         st.warning("No known metric columns found -- double check you uploaded the right files.")
         return
@@ -280,6 +289,10 @@ def render_eeg_tab():
         st.warning("No numeric channel columns detected.")
         return
 
+    # Raw EEG data is too large to hand an LLM directly -- keep only lightweight
+    # metadata for the chat tab (row/column counts, channel names).
+    st.session_state["eeg_info"] = {"rows": len(df), "columns": df.columns.tolist()}
+
     channel = st.selectbox("Channel to plot", numeric_cols)
     n_samples = st.slider("Samples to display", 100, min(5000, len(df)), min(1000, len(df)))
     d = df[channel].iloc[:n_samples]
@@ -301,18 +314,133 @@ def render_eeg_tab():
 
 
 # ---------------------------------------------------------------------------
+# Tab 4: Chat with the Data
+# ---------------------------------------------------------------------------
+CHAT_SYSTEM_PROMPT = """You are a data assistant embedded in an ADHD Data Explorer app.
+Answer the user's question using ONLY the data provided below -- do not use outside
+knowledge about ADHD, and do not make clinical or diagnostic claims. If the data
+provided doesn't contain the answer, say so plainly instead of guessing.
+Cite specific numbers from the data when you can. Keep answers concise (a few
+sentences, or a short list).
+
+DATA AVAILABLE:
+{context}
+"""
+
+
+def build_data_context() -> str:
+    parts = []
+
+    prevalence = load_prevalence()
+    parts.append("## National ADHD prevalence & demographics (CDC/NSCH 2022-2023)\n" + prevalence.to_markdown(index=False))
+
+    treatment = load_treatment_range()
+    parts.append("## Treatment rate range across US states (2022)\n" + treatment.to_markdown(index=False))
+
+    merged = st.session_state.get("health_merged")
+    if merged is not None:
+        cols = ["ID", "Group"] + [c for c in st.session_state.get("health_metric_options", {}).values()]
+        cols = [c for c in dict.fromkeys(cols) if c in merged.columns]
+        parts.append(
+            "## Adult health/activity data (HYPERAKTIV, uploaded by user)\n"
+            f"{len(merged)} matched patients. Group counts: "
+            f"{merged['Group'].value_counts().to_dict()}\n\n"
+            + merged[cols].to_markdown(index=False)
+        )
+    else:
+        parts.append("## Adult health/activity data\nNot uploaded yet in the Adult Health & Activity tab.")
+
+    eeg_info = st.session_state.get("eeg_info")
+    if eeg_info is not None:
+        parts.append(
+            "## EEG data\n"
+            f"An EEG file was uploaded with {eeg_info['rows']} rows and columns: "
+            f"{eeg_info['columns']}. (Raw signal values are not included here -- too large.)"
+        )
+    else:
+        parts.append("## EEG data\nNot uploaded yet in the EEG Signals tab.")
+
+    return "\n\n".join(parts)
+
+
+def render_chat_tab():
+    st.subheader("Chat with the Data")
+    st.caption("Ask questions in plain English -- the assistant answers using the data currently loaded in this app.")
+
+    if not ANTHROPIC_AVAILABLE:
+        st.error("The `anthropic` package isn't installed. Add `anthropic` to requirements.txt and redeploy.")
+        return
+
+    api_key = st.secrets.get("ANTHROPIC_API_KEY") if hasattr(st, "secrets") else None
+    if not api_key:
+        st.warning(
+            "No Anthropic API key found. Get a free key at "
+            "[console.anthropic.com](https://console.anthropic.com), then add it as a secret:\n\n"
+            "- **Streamlit Community Cloud:** app dashboard -> Settings -> Secrets, add:\n"
+            "  ```\n  ANTHROPIC_API_KEY = \"sk-ant-...\"\n  ```\n"
+            "- **Running locally:** create `.streamlit/secrets.toml` with the same line "
+            "(and add it to `.gitignore` so it never gets committed)."
+        )
+        return
+
+    if "chat_messages" not in st.session_state:
+        st.session_state.chat_messages = []
+
+    col1, col2 = st.columns([5, 1])
+    col2.button("Clear chat", on_click=lambda: st.session_state.update(chat_messages=[]))
+
+    for msg in st.session_state.chat_messages:
+        with st.chat_message(msg["role"]):
+            st.markdown(msg["content"])
+
+    prompt = st.chat_input("e.g. Which treatment type varies most across states?")
+    if not prompt:
+        return
+
+    st.session_state.chat_messages.append({"role": "user", "content": prompt})
+    with st.chat_message("user"):
+        st.markdown(prompt)
+
+    context = build_data_context()
+    system = CHAT_SYSTEM_PROMPT.format(context=context)
+
+    # Only send recent turns to keep token usage (and cost) bounded.
+    recent = st.session_state.chat_messages[-10:]
+
+    with st.chat_message("assistant"):
+        try:
+            client = anthropic.Anthropic(api_key=api_key)
+            response = client.messages.create(
+                model="claude-haiku-4-5",
+                max_tokens=600,
+                system=system,
+                messages=[{"role": m["role"], "content": m["content"]} for m in recent],
+            )
+            answer = response.content[0].text
+        except Exception as e:
+            answer = f"Something went wrong calling the AI: {e}"
+        st.markdown(answer)
+
+    st.session_state.chat_messages.append({"role": "assistant", "content": answer})
+
+
+# ---------------------------------------------------------------------------
 # App shell
 # ---------------------------------------------------------------------------
 st.set_page_config(page_title="ADHD Data Explorer", layout="wide")
 st.title("ADHD Data Explorer")
 
-tab1, tab2, tab3 = st.tabs(["Prevalence & Demographics", "Adult Health & Activity", "EEG Signals"])
+tab1, tab2, tab3, tab4 = st.tabs(
+    ["Prevalence & Demographics", "Adult Health & Activity", "EEG Signals", "Chat with the Data"]
+)
 with tab1:
     render_prevalence_tab()
 with tab2:
     render_health_tab()
 with tab3:
     render_eeg_tab()
+with tab4:
+    render_chat_tab()
 
 st.divider()
 st.caption(
