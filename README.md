@@ -21,10 +21,16 @@ from CDC / National Survey of Children's Health (NSCH) published statistics
 - https://www.cdc.gov/adhd/data/index.html
 - https://nschdata.org/browse/survey/results?q=10167
 
-Optional upgrade: upload a CSV with `state` and `rate` columns at the bottom of
-this tab to render a state-by-state choropleth map. Get state-level data from:
-- https://www.childhealthdata.org (free interactive query tool)
-- https://developers.americashealthrankings.org (free API, signup required)
+Also includes a real state-by-state choropleth map (`data/state_adhd_treatment.csv`,
+sourced from [America's Health Rankings](https://www.americashealthrankings.org/explore/measures/ADDtreat_overall),
+2023-2024) -- no upload or API key needed, it's baked in. Note this map uses a
+different measure (share of *all* children receiving treatment) than the
+treatment-range chart above it (share *among diagnosed* children) -- the app
+calls this out so the two aren't confused. An expander below the map lets you
+upload your own `state, rate` CSV to override it with different data (a
+different year, or pulled live from the free
+[America's Health Rankings API](https://developers.americashealthrankings.org/),
+which needs its own signup and API key if you want to automate that).
 
 ### 2. Adult Health & Activity -- requires a Kaggle download
 Dataset: "ADHD Diagnosis Data", also known as HYPERAKTIV -- clinical info,
