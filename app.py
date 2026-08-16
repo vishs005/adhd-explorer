@@ -175,6 +175,39 @@ CPT_FEATURE_CANDIDATES = [
 ]
 CLINICAL_SCALE_CANDIDATES = ["WURS", "ASRS", "MADRS", "HADS_A", "HADS_D"]
 
+# Plain-English meaning of each metric -- these are standard clinical/research
+# instruments, not self-explanatory column names.
+METRIC_INFO = {
+    "WURS": "Wender Utah Rating Scale -- an adult's retrospective self-report of "
+            "childhood ADHD symptoms. Higher score = more severe symptoms recalled from childhood.",
+    "ASRS": "Adult ADHD Self-Report Scale -- screens for current, present-day ADHD "
+            "symptoms in adults. Higher score = more current symptoms.",
+    "MADRS": "Montgomery-Asberg Depression Rating Scale -- a 10-item scale measuring "
+             "depression severity. Higher score = more severe depression symptoms.",
+    "HADS_A": "Hospital Anxiety and Depression Scale, Anxiety subscale -- higher score "
+              "= more anxiety symptoms.",
+    "HADS_D": "Hospital Anxiety and Depression Scale, Depression subscale -- higher "
+              "score = more depression symptoms.",
+    "ACC__mean": "Average wrist movement intensity over the recording period (from the wrist accelerometer).",
+    "ACC__standard_deviation": "How much wrist movement varied over time -- higher means more erratic/variable activity.",
+    "ACC__maximum": "The single most intense movement spike recorded during the monitoring period.",
+    "ACC__minimum": "The lowest movement level recorded (closest to stillness).",
+    "ACC__sum_values": "Total accumulated movement signal across the whole recording -- a rough measure of overall activity volume.",
+    "ACC__abs_energy": "Overall 'energy' of the movement signal (sum of squared values) -- captures both intensity and duration of movement.",
+    "ACC__median": "The typical (middle) wrist movement level, less sensitive to brief spikes than the mean.",
+    "ACC__variance": "Statistical variance of movement -- same idea as standard deviation, useful for comparing spread.",
+    "Adhd TScore Omissions": "From the CPT-II attention test: missed targets (failing to respond when they should have). "
+                             "Reflects inattention -- a higher T-score indicates more missed targets.",
+    "Adhd TScore Commissions": "From the CPT-II attention test: responded when they shouldn't have (false alarms). "
+                                "Reflects impulsivity -- a higher T-score indicates more impulsive responding.",
+    "Adhd TScore HitRT": "Average reaction time to correctly-identified targets on the CPT-II attention test.",
+    "Adhd TScore VarSE": "How much reaction time varied across the CPT-II test -- higher means less consistent, "
+                          "more variable attention over the task.",
+    "Adhd TScore DPrime": "A signal-detection score reflecting how well the person distinguished targets from "
+                           "non-targets on the CPT-II test.",
+    "Adhd Confidence Index": "A composite CPT-II score combining multiple performance measures into one index.",
+}
+
 
 def render_health_tab():
     st.subheader("Adult Health & Activity")
@@ -260,23 +293,57 @@ def render_health_tab():
     style_axes(fig)
     st.plotly_chart(fig, use_container_width=True)
 
+    info = METRIC_INFO.get(metric_col)
+    if info:
+        st.caption(f"**What this measures:** {info}")
+
+    with st.expander("Glossary -- what all these metrics mean"):
+        for cat, cols in [
+            ("Clinical scales", CLINICAL_SCALE_CANDIDATES),
+            ("Wrist activity", ACTIVITY_FEATURE_CANDIDATES),
+            ("CPT-II attention test", CPT_FEATURE_CANDIDATES),
+        ]:
+            present = [c for c in cols if c in metric_options.values()]
+            if not present:
+                continue
+            st.markdown(f"**{cat}**")
+            for c in present:
+                st.markdown(f"- **{c}**: {METRIC_INFO.get(c, 'No description available.')}")
+
 
 # ---------------------------------------------------------------------------
 # Tab 3: EEG Signals (Kaggle upload-driven)
 # ---------------------------------------------------------------------------
+# The international 10-20 electrode placement system -- these column names are
+# electrode positions on the scalp, not arbitrary labels.
+EEG_CHANNEL_INFO = {
+    "Fp1": "Frontopolar, left", "Fp2": "Frontopolar, right",
+    "F3": "Frontal, left", "F4": "Frontal, right",
+    "F7": "Frontal, far left", "F8": "Frontal, far right",
+    "Fz": "Frontal, midline",
+    "C3": "Central, left", "C4": "Central, right", "Cz": "Central, midline",
+    "T7": "Temporal, left", "T8": "Temporal, right",
+    "P3": "Parietal, left", "P4": "Parietal, right",
+    "P7": "Parietal, far left", "P8": "Parietal, far right",
+    "Pz": "Parietal, midline",
+    "O1": "Occipital, left", "O2": "Occipital, right",
+}
+
+
 def render_eeg_tab():
     st.subheader("EEG Signals")
     st.caption("Dataset: Kaggle - 'EEG Dataset for ADHD' (raw EEG channel data, ADHD vs. control).")
 
     st.write(
         "Download from [Kaggle](https://www.kaggle.com/datasets/danizo/eeg-dataset-for-adhd) "
-        "and upload a CSV below. This tab expects one column per EEG channel (numeric), "
-        "and optionally a label/group column."
+        "and upload a CSV below. Each column is an electrode placed on the scalp (the "
+        "international '10-20 system'), each row is one instant in time, and the values "
+        "are raw voltage readings -- meaningful as a waveform over time, not as standalone numbers."
     )
     f = st.file_uploader("Upload an EEG CSV", type="csv", key="eeg_upload")
     if f is None:
-        st.info("Once uploaded, you'll be able to plot a channel's raw waveform and, if a group/label "
-                "column exists, compare signal characteristics between ADHD and control subjects.")
+        st.info("Once uploaded, you'll pick one recording and one channel to see its actual waveform, "
+                 "and optionally compare signal levels between ADHD and control recordings.")
         return
 
     df = pd.read_csv(f)
@@ -293,35 +360,83 @@ def render_eeg_tab():
     # metadata for the chat tab (row/column counts, channel names).
     st.session_state["eeg_info"] = {"rows": len(df), "columns": df.columns.tolist()}
 
+    id_col = "ID" if "ID" in df.columns else None
+    class_col = "Class" if "Class" in df.columns else None
+
+    st.divider()
+    st.markdown("**Waveform viewer -- one continuous recording**")
+
+    if id_col:
+        # Each ID is one continuous recording; rows for different IDs may be
+        # stacked in the file, so filter to a single ID before plotting a
+        # waveform -- otherwise the chart jumps between unrelated recordings.
+        ids = df[id_col].dropna().unique().tolist()
+        rec = st.selectbox(f"Recording ({id_col})", ids)
+        rec_df = df[df[id_col] == rec].reset_index(drop=True)
+        if class_col:
+            rec_class = rec_df[class_col].iloc[0] if len(rec_df) else "unknown"
+            st.caption(f"Recording **{rec}** -- {len(rec_df):,} samples, labeled **{rec_class}**")
+    else:
+        st.caption("No 'ID' column found -- treating the whole file as one continuous recording.")
+        rec_df = df
+
     channel = st.selectbox("Channel to plot", numeric_cols)
-    n_samples = st.slider("Samples to display", 100, min(5000, len(df)), min(1000, len(df)))
-    d = df[channel].iloc[:n_samples]
+    ch_note = EEG_CHANNEL_INFO.get(channel)
+    if ch_note:
+        st.caption(f"{channel} = {ch_note} electrode (10-20 system)")
+
+    max_samples = max(len(rec_df), 100)
+    n_samples = st.slider("Samples to display", 100, min(5000, max_samples), min(1000, max_samples))
+    d = rec_df[channel].iloc[:n_samples]
     fig = go.Figure(go.Scatter(y=d, mode="lines", line=dict(color=BLUE, width=1)))
-    fig.update_layout(title=f"{channel} - raw waveform (first {n_samples} samples)", **BASE_LAYOUT)
+    fig.update_layout(title=f"{channel} -- raw waveform, recording {rec if id_col else '(whole file)'}", **BASE_LAYOUT)
     style_axes(fig)
     st.plotly_chart(fig, use_container_width=True)
 
-    group_col = st.selectbox("Group / label column (optional)", ["(none)"] + df.columns.tolist())
+    st.divider()
+    st.markdown("**Group comparison -- ADHD vs. control**")
+    st.caption(
+        "This pools every raw sample across all recordings, so it's a rough, noisy comparison "
+        "(not a per-person statistical test) -- useful for a quick sanity check, not a conclusion."
+    )
+    default_group = class_col if class_col else "(none)"
+    group_options = ["(none)"] + df.columns.tolist()
+    group_col = st.selectbox(
+        "Group / label column", group_options, index=group_options.index(default_group)
+    )
     if group_col != "(none)" and df[group_col].nunique() <= 8:
         groups = df[group_col].dropna().unique().tolist()
         fig = go.Figure()
         for i, g in enumerate(groups):
             fig.add_trace(go.Box(y=df.loc[df[group_col] == g, channel], name=str(g),
                                   marker_color=CATEGORICAL[i % len(CATEGORICAL)]))
-        fig.update_layout(title=f"{channel} distribution by {group_col}", **BASE_LAYOUT)
+        fig.update_layout(title=f"{channel} -- all samples, grouped by {group_col}", **BASE_LAYOUT)
         style_axes(fig)
         st.plotly_chart(fig, use_container_width=True)
+
+    with st.expander("What do the electrode names mean?"):
+        st.write(
+            "Each column is an electrode position under the international 10-20 system: "
+            "Fp = frontopolar, F = frontal, C = central, P = parietal, T = temporal, "
+            "O = occipital, and 'z' marks the midline. Odd numbers are the left side of "
+            "the head, even numbers are the right."
+        )
+        cols = st.columns(3)
+        items = [c for c in numeric_cols if c in EEG_CHANNEL_INFO]
+        for i, c in enumerate(items):
+            cols[i % 3].markdown(f"- **{c}**: {EEG_CHANNEL_INFO[c]}")
 
 
 # ---------------------------------------------------------------------------
 # Tab 4: Chat with the Data
 # ---------------------------------------------------------------------------
 CHAT_SYSTEM_PROMPT = """You are a data assistant embedded in an ADHD Data Explorer app.
-Answer the user's question using ONLY the data provided below -- do not use outside
-knowledge about ADHD, and do not make clinical or diagnostic claims. If the data
-provided doesn't contain the answer, say so plainly instead of guessing.
-Cite specific numbers from the data when you can. Keep answers concise (a few
-sentences, or a short list).
+Answer the user's question using ONLY the data and glossary provided below -- do not
+use outside knowledge about ADHD beyond what's in the glossary, and do not make
+clinical or diagnostic claims. If the data provided doesn't contain the answer, say
+so plainly instead of guessing. You may use the glossary to explain what a metric or
+clinical scale means. Cite specific numbers from the data when you can. Keep answers
+concise (a few sentences, or a short list).
 
 DATA AVAILABLE:
 {context}
@@ -330,6 +445,9 @@ DATA AVAILABLE:
 
 def build_data_context() -> str:
     parts = []
+
+    glossary_lines = "\n".join(f"- **{k}**: {v}" for k, v in METRIC_INFO.items())
+    parts.append("## Glossary of clinical/technical terms used in this app\n" + glossary_lines)
 
     prevalence = load_prevalence()
     parts.append("## National ADHD prevalence & demographics (CDC/NSCH 2022-2023)\n" + prevalence.to_markdown(index=False))
