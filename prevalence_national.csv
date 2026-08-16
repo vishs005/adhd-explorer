@@ -1,0 +1,14 @@
+category,subgroup,value_pct,note
+sex,Boys,13,2022-2023 NSCH
+sex,Girls,7,2022-2023 NSCH
+race_ethnicity,Black,11,2022-2023 NSCH
+race_ethnicity,White,11,2022-2023 NSCH
+race_ethnicity,Hispanic,8,2022-2023 NSCH
+race_ethnicity,American Indian/Alaska Native,8,2022-2023 NSCH
+race_ethnicity,Native Hawaiian/Pacific Islander,6,2022-2023 NSCH
+race_ethnicity,Asian,3,2022-2023 NSCH
+severity,Mild,40,2022 NSCH; among diagnosed children
+severity,Moderate or severe,60,2022 NSCH; among diagnosed children
+co_occurring,Any co-occurring condition,78,2022 NSCH; among diagnosed children
+co_occurring,Behavior/conduct problems,50,2022 NSCH; among diagnosed children
+co_occurring,Anxiety,40,2022 NSCH; among diagnosed children
