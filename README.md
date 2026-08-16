@@ -26,19 +26,30 @@ this tab to render a state-by-state choropleth map. Get state-level data from:
 - https://developers.americashealthrankings.org (free API, signup required)
 
 ### 2. Adult Health & Activity -- requires a Kaggle download
-Dataset: "ADHD Diagnosis Data" (heart rate / activity data from adults with and
-without ADHD).
+Dataset: "ADHD Diagnosis Data", also known as HYPERAKTIV -- clinical info,
+wrist activity features, and CPT-II attention-test scores for adults with
+ADHD and matched controls.
 - https://www.kaggle.com/datasets/arashnic/adhd-diagnosis-data
 
 To get it:
 1. Create a free Kaggle account if you don't have one.
-2. Open the link above and click "Download" (no API key needed for a manual
-   download through the browser).
-3. Unzip and upload the CSV through the app's file uploader on this tab.
+2. Open the link above and use the **Data Explorer** to download individual
+   files -- you don't need the whole 551MB dataset. Grab just:
+   - `patient_info.csv` (required -- has the ADHD/control label + clinical
+     scale scores)
+   - `features.csv` (optional -- wrist accelerometer summary features)
+   - `CPT_II_ConnersContinuousPerformanceTest.csv` (optional -- attention
+     test scores)
+3. Skip the `activity_data/`, `hrv_data/`, and `hyperaktiv_with_controls/`
+   folders -- those hold raw per-second sensor data and account for almost
+   all of the 551MB; this tab doesn't use them.
+4. Upload the file(s) through the three uploaders on this tab. All three
+   files are semicolon-delimited (`;`), which the app handles automatically.
 
-The tab auto-detects numeric columns, lets you pick a metric + a group column
-(e.g. ADHD vs. control) and shows box plots / distributions, plus a trend line
-if it finds a time or date column.
+The tab joins whichever files you upload on the shared `ID` column, uses the
+real `ADHD` (1/0) column as the group label, and lets you compare clinical
+scale scores, wrist-activity summary stats, and CPT attention-test scores
+between the ADHD and control groups via box plots.
 
 ### 3. EEG Signals -- requires a Kaggle download
 Dataset: "EEG Dataset for ADHD" (raw EEG channel data, children with and
