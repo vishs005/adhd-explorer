@@ -1,18 +1,19 @@
 """
 ADHD Data Explorer
 ===================
-A single Streamlit app with three tabs:
+A single Streamlit app with four tabs:
   1. Prevalence & Demographics  -- CDC / NSCH national data (built-in, no download needed)
-  2. Adult Health & Activity    -- Kaggle "ADHD Diagnosis Data" (heart rate / activity)
-  3. EEG Signals                -- Kaggle "EEG Dataset for ADHD"
-
-Tabs 2 and 3 use a file uploader: download the CSVs from Kaggle (see README.md
-for links + instructions), then drop them in here or upload through the UI.
+  2. Adult Health & Activity    -- Kaggle "ADHD Diagnosis Data" (HYPERAKTIV), or synthetic sample data
+  3. EEG Signals                -- Kaggle "EEG Dataset for ADHD", or synthetic sample data
+  4. Chat with the Data         -- Claude-powered chat that answers from whatever's loaded, and can draw charts
 
 Run with:
     streamlit run app.py
 """
 
+import random
+
+import numpy as np
 import pandas as pd
 import plotly.graph_objects as go
 import streamlit as st
@@ -23,32 +24,46 @@ try:
 except ImportError:
     ANTHROPIC_AVAILABLE = False
 
+
 # ---------------------------------------------------------------------------
-# Palette (validated categorical order -- see dataviz skill reference)
+# Theme -- light/dark palettes, both validated colorblind-safe (see dataviz
+# skill reference). Charts are re-themed on every rerun based on the sidebar
+# toggle, rather than using fixed module-level colors.
 # ---------------------------------------------------------------------------
-BLUE = "#2a78d6"
-ORANGE = "#eb6834"
-AQUA = "#1baf7a"
-YELLOW = "#eda100"
-CATEGORICAL = [BLUE, ORANGE, AQUA, YELLOW, "#e87ba4", "#008300", "#4a3aa7", "#e34948"]
-
-CHART_SURFACE = "#fcfcfb"
-GRIDLINE = "#e1e0d9"
-MUTED_INK = "#898781"
-PRIMARY_INK = "#0b0b0b"
-SECONDARY_INK = "#52514e"
-
-BASE_LAYOUT = dict(
-    plot_bgcolor=CHART_SURFACE,
-    paper_bgcolor=CHART_SURFACE,
-    font=dict(family="system-ui, -apple-system, 'Segoe UI', sans-serif", color=PRIMARY_INK),
-    margin=dict(l=10, r=10, t=40, b=10),
-)
+PALETTES = {
+    "light": dict(
+        BLUE="#2a78d6", ORANGE="#eb6834", AQUA="#1baf7a", YELLOW="#eda100",
+        MAGENTA="#e87ba4", GREEN="#008300", VIOLET="#4a3aa7", RED="#e34948",
+        SURFACE="#fcfcfb", GRIDLINE="#e1e0d9", MUTED_INK="#898781",
+        PRIMARY_INK="#0b0b0b", SECONDARY_INK="#52514e",
+    ),
+    "dark": dict(
+        BLUE="#3987e5", ORANGE="#d95926", AQUA="#199e70", YELLOW="#c98500",
+        MAGENTA="#d55181", GREEN="#008300", VIOLET="#9085e9", RED="#e66767",
+        SURFACE="#1a1a19", GRIDLINE="#2c2c2a", MUTED_INK="#898781",
+        PRIMARY_INK="#ffffff", SECONDARY_INK="#c3c2b7",
+    ),
+}
 
 
-def style_axes(fig, x_grid=False, y_grid=True):
-    fig.update_xaxes(showgrid=x_grid, gridcolor=GRIDLINE, zeroline=False, showline=True, linecolor=GRIDLINE)
-    fig.update_yaxes(showgrid=y_grid, gridcolor=GRIDLINE, zeroline=False, showline=False, tickfont=dict(color=MUTED_INK))
+def get_theme():
+    mode = "dark" if st.session_state.get("dark_mode", False) else "light"
+    p = PALETTES[mode]
+    categorical = [p["BLUE"], p["ORANGE"], p["AQUA"], p["YELLOW"],
+                   p["MAGENTA"], p["GREEN"], p["VIOLET"], p["RED"]]
+    base_layout = dict(
+        plot_bgcolor=p["SURFACE"], paper_bgcolor=p["SURFACE"],
+        font=dict(family="system-ui, -apple-system, 'Segoe UI', sans-serif", color=p["PRIMARY_INK"]),
+        margin=dict(l=10, r=10, t=40, b=10),
+    )
+    return {**p, "CATEGORICAL": categorical, "BASE_LAYOUT": base_layout}
+
+
+def style_axes(fig, theme, x_grid=False, y_grid=True):
+    fig.update_xaxes(showgrid=x_grid, gridcolor=theme["GRIDLINE"], zeroline=False,
+                      showline=True, linecolor=theme["GRIDLINE"])
+    fig.update_yaxes(showgrid=y_grid, gridcolor=theme["GRIDLINE"], zeroline=False,
+                      showline=False, tickfont=dict(color=theme["MUTED_INK"]))
     return fig
 
 
@@ -65,10 +80,37 @@ def load_treatment_range():
     return pd.read_csv("data/treatment_state_range.csv")
 
 
+PREVALENCE_TITLES = {
+    "sex": "Diagnosis rate by sex",
+    "race_ethnicity": "Diagnosis rate by race / ethnicity",
+    "severity": "Severity among diagnosed children",
+    "co_occurring": "Co-occurring conditions among diagnosed children",
+}
+
+
+def prevalence_bar_chart(theme, df_subset, title, x_col="value_pct", y_col="subgroup", suffix="%"):
+    d = df_subset.sort_values(x_col, ascending=True)
+    fig = go.Figure(
+        go.Bar(
+            x=d[x_col], y=d[y_col], orientation="h",
+            marker=dict(color=theme["BLUE"]),
+            text=[f"{v:g}{suffix}" for v in d[x_col]],
+            textposition="outside",
+            hovertemplate="%{y}: %{x:g}" + suffix + "<extra></extra>",
+        )
+    )
+    fig.update_layout(title=title, height=280, **theme["BASE_LAYOUT"])
+    style_axes(fig, theme)
+    fig.update_xaxes(title=None, ticksuffix="%")
+    fig.update_yaxes(title=None)
+    return fig
+
+
 # ---------------------------------------------------------------------------
 # Tab 1: Prevalence & Demographics
 # ---------------------------------------------------------------------------
 def render_prevalence_tab():
+    theme = get_theme()
     st.subheader("ADHD Prevalence & Demographics")
     st.caption("Source: CDC / National Survey of Children's Health (NSCH), 2022-2023, U.S. children ages 3-17.")
 
@@ -80,36 +122,19 @@ def render_prevalence_tab():
     st.divider()
     prevalence = load_prevalence()
 
-    def single_series_bar(df, title, x_col="value_pct", y_col="subgroup", suffix="%"):
-        d = df.sort_values(x_col, ascending=True)
-        fig = go.Figure(
-            go.Bar(
-                x=d[x_col], y=d[y_col], orientation="h",
-                marker=dict(color=BLUE),
-                text=[f"{v:g}{suffix}" for v in d[x_col]],
-                textposition="outside",
-                hovertemplate="%{y}: %{x:g}" + suffix + "<extra></extra>",
-            )
-        )
-        fig.update_layout(title=title, height=280, **BASE_LAYOUT)
-        style_axes(fig)
-        fig.update_xaxes(title=None, ticksuffix="%")
-        fig.update_yaxes(title=None)
-        return fig
-
     col1, col2 = st.columns(2)
     with col1:
         d = prevalence[prevalence.category == "sex"]
-        st.plotly_chart(single_series_bar(d, "Diagnosis rate by sex"), use_container_width=True)
+        st.plotly_chart(prevalence_bar_chart(theme, d, PREVALENCE_TITLES["sex"]), use_container_width=True)
     with col2:
         d = prevalence[prevalence.category == "severity"]
-        st.plotly_chart(single_series_bar(d, "Severity among diagnosed children"), use_container_width=True)
+        st.plotly_chart(prevalence_bar_chart(theme, d, PREVALENCE_TITLES["severity"]), use_container_width=True)
 
     d = prevalence[prevalence.category == "race_ethnicity"]
-    st.plotly_chart(single_series_bar(d, "Diagnosis rate by race / ethnicity"), use_container_width=True)
+    st.plotly_chart(prevalence_bar_chart(theme, d, PREVALENCE_TITLES["race_ethnicity"]), use_container_width=True)
 
     d = prevalence[prevalence.category == "co_occurring"]
-    st.plotly_chart(single_series_bar(d, "Co-occurring conditions among diagnosed children"), use_container_width=True)
+    st.plotly_chart(prevalence_bar_chart(theme, d, PREVALENCE_TITLES["co_occurring"]), use_container_width=True)
 
     st.divider()
     st.markdown("**Treatment received -- how much it varies state to state**")
@@ -120,14 +145,14 @@ def render_prevalence_tab():
             go.Scatter(
                 x=[row.low_pct, row.high_pct], y=[row.treatment_type, row.treatment_type],
                 mode="lines+markers",
-                line=dict(color=GRIDLINE, width=4),
-                marker=dict(size=12, color=[ORANGE, BLUE]),
+                line=dict(color=theme["GRIDLINE"], width=4),
+                marker=dict(size=12, color=[theme["ORANGE"], theme["BLUE"]]),
                 hovertemplate="%{x:g}%<extra></extra>",
                 showlegend=False,
             )
         )
-    fig.update_layout(title="Treatment rate range across states (2022)", height=260, **BASE_LAYOUT)
-    style_axes(fig)
+    fig.update_layout(title="Treatment rate range across states (2022)", height=260, **theme["BASE_LAYOUT"])
+    style_axes(fig, theme)
     fig.update_xaxes(ticksuffix="%", range=[0, 100])
     st.plotly_chart(fig, use_container_width=True)
     st.caption("Orange marker = lowest-treating state's rate, blue marker = highest-treating state's rate, for that treatment type.")
@@ -135,6 +160,9 @@ def render_prevalence_tab():
     with st.expander("View underlying data"):
         st.dataframe(prevalence, use_container_width=True)
         st.dataframe(tr, use_container_width=True)
+
+    combined_csv = pd.concat([prevalence, tr], axis=0, ignore_index=True, sort=False).to_csv(index=False).encode()
+    st.download_button("Download this data as CSV", combined_csv, file_name="adhd_prevalence_data.csv", mime="text/csv")
 
     st.divider()
     st.markdown("**Want a state-by-state map?**")
@@ -155,12 +183,12 @@ def render_prevalence_tab():
                 colorscale=[[0, "#cde2fb"], [1, "#0d366b"]], colorbar_title="Rate (%)",
             )
         )
-        fig.update_layout(geo_scope="usa", title="ADHD rate by state", **BASE_LAYOUT)
+        fig.update_layout(geo_scope="usa", title="ADHD rate by state", **theme["BASE_LAYOUT"])
         st.plotly_chart(fig, use_container_width=True)
 
 
 # ---------------------------------------------------------------------------
-# Tab 2: Adult Health & Activity (Kaggle "HYPERAKTIV" upload-driven)
+# Tab 2: Adult Health & Activity (Kaggle "HYPERAKTIV", real upload or sample)
 # ---------------------------------------------------------------------------
 # Curated, human-readable shortlists -- the raw files have 780+ auto-generated
 # feature columns (tsfresh) and 360 raw CPT trial columns; we surface the
@@ -209,7 +237,142 @@ METRIC_INFO = {
 }
 
 
+def health_box_plot(theme, merged, metric_col, label):
+    fig = go.Figure()
+    for i, g in enumerate(["ADHD", "Control"]):
+        vals = merged.loc[merged["Group"] == g, metric_col].dropna()
+        fig.add_trace(go.Box(y=vals, name=g, marker_color=theme["CATEGORICAL"][i], boxmean=True))
+    fig.update_layout(title=f"{label} -- ADHD vs. Control", **theme["BASE_LAYOUT"])
+    style_axes(fig, theme)
+    return fig
+
+
+def _health_metric_options_for_columns(present_by_category):
+    """present_by_category: dict of category -> list of present column names."""
+    metric_options = {}
+    for c in present_by_category.get("clinical", []):
+        metric_options[f"Clinical scale: {c}"] = c
+    for c in present_by_category.get("activity", []):
+        metric_options[f"Wrist activity: {c.replace('ACC__', '')}"] = c
+    for c in present_by_category.get("cpt", []):
+        metric_options[f"Attention test (CPT-II): {c}"] = c
+    return metric_options
+
+
+@st.cache_data
+def generate_sample_health_data():
+    """Synthetic demo data -- NOT real patients. Shaped like the real HYPERAKTIV
+    columns so the rest of the app can't tell the difference, with plausible
+    (but made up) group differences so the charts look interesting."""
+    rng = np.random.default_rng(42)
+    n = 40
+    groups = np.array(["ADHD"] * n + ["Control"] * n)
+
+    def draw(adhd_mean, adhd_sd, ctrl_mean, ctrl_sd):
+        vals = np.where(groups == "ADHD", rng.normal(adhd_mean, adhd_sd, 2 * n),
+                         rng.normal(ctrl_mean, ctrl_sd, 2 * n))
+        return np.round(vals, 1)
+
+    df = pd.DataFrame({"ID": range(1, 2 * n + 1), "Group": groups})
+    df["ADHD"] = (df["Group"] == "ADHD").astype(int)
+    df["WURS"] = draw(55, 15, 25, 12)
+    df["ASRS"] = draw(60, 10, 35, 10)
+    df["MADRS"] = draw(15, 8, 10, 6)
+    df["HADS_A"] = draw(9, 4, 6, 3)
+    df["HADS_D"] = draw(7, 4, 4, 3)
+    df["ACC__mean"] = draw(120, 20, 100, 15)
+    df["ACC__standard_deviation"] = draw(80, 15, 55, 12)
+    df["ACC__maximum"] = draw(500, 80, 400, 70)
+    df["ACC__minimum"] = np.round(rng.normal(-50, 20, 2 * n), 1)
+    df["ACC__sum_values"] = draw(50000, 8000, 42000, 7000)
+    df["ACC__abs_energy"] = draw(900000, 150000, 700000, 120000)
+    df["ACC__median"] = draw(110, 18, 95, 14)
+    df["ACC__variance"] = draw(6400, 1200, 3000, 900)
+    df["Adhd TScore Omissions"] = draw(58, 10, 50, 8)
+    df["Adhd TScore Commissions"] = draw(62, 10, 50, 8)
+    df["Adhd TScore HitRT"] = draw(55, 10, 50, 8)
+    df["Adhd TScore VarSE"] = draw(60, 10, 48, 8)
+    df["Adhd TScore DPrime"] = draw(48, 10, 55, 8)
+    df["Adhd Confidence Index"] = draw(65, 12, 45, 10)
+
+    metric_options = _health_metric_options_for_columns({
+        "clinical": CLINICAL_SCALE_CANDIDATES,
+        "activity": ACTIVITY_FEATURE_CANDIDATES,
+        "cpt": CPT_FEATURE_CANDIDATES,
+    })
+    return df, metric_options
+
+
+def render_guess_game(theme, merged, metric_options):
+    st.divider()
+    st.markdown("**Guess the Group**")
+    st.caption(
+        "Two anonymized box plots below -- one's the ADHD group, one's Control, for a "
+        "randomly picked metric. Test your intuition for how different (or similar!) these "
+        "distributions really are."
+    )
+
+    st.session_state.setdefault("game_score", {"correct": 0, "total": 0})
+    score = st.session_state["game_score"]
+
+    if "game_round" not in st.session_state:
+        _new_game_round(metric_options)
+    if st.button("New round"):
+        _new_game_round(metric_options)
+    round_ = st.session_state["game_round"]
+
+    if round_["metric_col"] not in metric_options.values():
+        # Data source changed since the last round (e.g. switched from sample to real upload).
+        _new_game_round(metric_options)
+        round_ = st.session_state["game_round"]
+
+    metric_col = round_["metric_col"]
+    a_group, b_group = ("Control", "ADHD") if round_["flip"] else ("ADHD", "Control")
+
+    fig = go.Figure()
+    fig.add_trace(go.Box(y=merged.loc[merged["Group"] == a_group, metric_col].dropna(),
+                          name="Group A", marker_color=theme["CATEGORICAL"][0], boxmean=True))
+    fig.add_trace(go.Box(y=merged.loc[merged["Group"] == b_group, metric_col].dropna(),
+                          name="Group B", marker_color=theme["CATEGORICAL"][1], boxmean=True))
+    fig.update_layout(title="Mystery metric -- Group A vs. Group B", **theme["BASE_LAYOUT"])
+    style_axes(fig, theme)
+    st.plotly_chart(fig, use_container_width=True)
+
+    correct_letter = "A" if a_group == "ADHD" else "B"
+
+    if not round_["answered"]:
+        c1, c2, c3 = st.columns(3)
+        if c1.button("Group A is ADHD"):
+            _score_guess(round_, "A", correct_letter, score)
+        if c2.button("Group B is ADHD"):
+            _score_guess(round_, "B", correct_letter, score)
+        c3.metric("Score", f"{score['correct']}/{score['total']}")
+    else:
+        st.metric("Score", f"{score['correct']}/{score['total']}")
+        if round_["correct"]:
+            st.success(f"Correct! Group {correct_letter} was ADHD (metric: {round_['label']}). Click 'New round' to keep going.")
+        else:
+            st.error(f"Not quite -- Group {correct_letter} was actually ADHD (metric: {round_['label']}). Click 'New round' to try another.")
+
+
+def _new_game_round(metric_options):
+    label = random.choice(list(metric_options.keys()))
+    st.session_state["game_round"] = {
+        "label": label, "metric_col": metric_options[label],
+        "flip": random.choice([True, False]), "answered": False, "correct": False,
+    }
+
+
+def _score_guess(round_, guess_letter, correct_letter, score):
+    round_["answered"] = True
+    round_["correct"] = guess_letter == correct_letter
+    score["total"] += 1
+    if round_["correct"]:
+        score["correct"] += 1
+
+
 def render_health_tab():
+    theme = get_theme()
     st.subheader("Adult Health & Activity")
     st.caption(
         "Dataset: Kaggle - 'ADHD Diagnosis Data' (the HYPERAKTIV dataset -- clinical info, "
@@ -229,54 +392,63 @@ def render_health_tab():
     feat_file = col2.file_uploader("features.csv (optional)", type="csv", key="feat_upload")
     cpt_file = col3.file_uploader("CPT CSV (optional)", type="csv", key="cpt_upload")
 
-    if pi_file is None:
-        st.info("Upload at least `patient_info.csv` to get started -- it's small (under 1MB) and "
-                 "holds the ADHD/control label plus clinical scale scores (WURS, ASRS, MADRS, HADS).")
+    st.markdown("**Don't have the files handy?**")
+    if st.button("Load synthetic sample data instead"):
+        st.session_state["health_sample_mode"] = True
+    use_sample = pi_file is None and st.session_state.get("health_sample_mode", False)
+
+    if pi_file is None and not use_sample:
+        st.info("Upload at least `patient_info.csv`, or click \"Load synthetic sample data\" above to "
+                 "try the app immediately.")
         return
 
-    pi = pd.read_csv(pi_file, sep=";")
-    if "ADHD" not in pi.columns or "ID" not in pi.columns:
-        st.error("This doesn't look like patient_info.csv -- expected an 'ID' and 'ADHD' column.")
-        return
-    pi["Group"] = pi["ADHD"].map({1: "ADHD", 0: "Control"})
+    if use_sample:
+        st.info("Showing **synthetic demo data** -- randomly generated, not real patients. "
+                 "Upload real files above any time to replace it.")
+        merged, metric_options = generate_sample_health_data()
+    else:
+        pi = pd.read_csv(pi_file, sep=";")
+        if "ADHD" not in pi.columns or "ID" not in pi.columns:
+            st.error("This doesn't look like patient_info.csv -- expected an 'ID' and 'ADHD' column.")
+            return
+        pi["Group"] = pi["ADHD"].map({1: "ADHD", 0: "Control"})
 
-    merged = pi.copy()
-    metric_options = {}  # display label -> column name
-    for c in CLINICAL_SCALE_CANDIDATES:
-        if c in merged.columns:
-            metric_options[f"Clinical scale: {c}"] = c
+        merged = pi.copy()
+        present = {"clinical": [c for c in CLINICAL_SCALE_CANDIDATES if c in merged.columns],
+                   "activity": [], "cpt": []}
 
-    if feat_file is not None:
-        feat = pd.read_csv(feat_file, sep=";")
-        present = [c for c in ACTIVITY_FEATURE_CANDIDATES if c in feat.columns]
-        if present:
-            merged = merged.merge(feat[["ID"] + present], on="ID", how="inner")
-            for c in present:
-                metric_options[f"Wrist activity: {c.replace('ACC__', '')}"] = c
-        else:
-            st.warning("features.csv was uploaded but none of the expected ACC__ columns were found.")
+        if feat_file is not None:
+            feat = pd.read_csv(feat_file, sep=";")
+            found = [c for c in ACTIVITY_FEATURE_CANDIDATES if c in feat.columns]
+            if found:
+                merged = merged.merge(feat[["ID"] + found], on="ID", how="inner")
+                present["activity"] = found
+            else:
+                st.warning("features.csv was uploaded but none of the expected ACC__ columns were found.")
 
-    if cpt_file is not None:
-        cpt = pd.read_csv(cpt_file, sep=";")
-        present = [c for c in CPT_FEATURE_CANDIDATES if c in cpt.columns]
-        if present:
-            merged = merged.merge(cpt[["ID"] + present], on="ID", how="inner")
-            for c in present:
-                metric_options[f"Attention test (CPT-II): {c}"] = c
-        else:
-            st.warning("The CPT CSV was uploaded but none of the expected summary-score columns were found.")
+        if cpt_file is not None:
+            cpt = pd.read_csv(cpt_file, sep=";")
+            found = [c for c in CPT_FEATURE_CANDIDATES if c in cpt.columns]
+            if found:
+                merged = merged.merge(cpt[["ID"] + found], on="ID", how="inner")
+                present["cpt"] = found
+            else:
+                st.warning("The CPT CSV was uploaded but none of the expected summary-score columns were found.")
+
+        metric_options = _health_metric_options_for_columns(present)
 
     n_adhd = (merged["Group"] == "ADHD").sum()
     n_control = (merged["Group"] == "Control").sum()
     c1, c2 = st.columns(2)
-    c1.metric("ADHD patients (matched across uploaded files)", n_adhd)
-    c2.metric("Controls (matched across uploaded files)", n_control)
+    c1.metric("ADHD patients (matched across loaded files)", n_adhd)
+    c2.metric("Controls (matched across loaded files)", n_control)
 
-    with st.expander("Preview merged data"):
+    with st.expander("Preview data"):
         st.dataframe(merged.head(50), use_container_width=True)
 
     st.session_state["health_merged"] = merged
     st.session_state["health_metric_options"] = metric_options
+    st.session_state["health_is_sample"] = use_sample
 
     if not metric_options:
         st.warning("No known metric columns found -- double check you uploaded the right files.")
@@ -285,12 +457,7 @@ def render_health_tab():
     label = st.selectbox("Metric to compare", list(metric_options.keys()))
     metric_col = metric_options[label]
 
-    fig = go.Figure()
-    for i, g in enumerate(["ADHD", "Control"]):
-        vals = merged.loc[merged["Group"] == g, metric_col].dropna()
-        fig.add_trace(go.Box(y=vals, name=g, marker_color=CATEGORICAL[i], boxmean=True))
-    fig.update_layout(title=f"{label} -- ADHD vs. Control", **BASE_LAYOUT)
-    style_axes(fig)
+    fig = health_box_plot(theme, merged, metric_col, label)
     st.plotly_chart(fig, use_container_width=True)
 
     info = METRIC_INFO.get(metric_col)
@@ -310,9 +477,14 @@ def render_health_tab():
             for c in present:
                 st.markdown(f"- **{c}**: {METRIC_INFO.get(c, 'No description available.')}")
 
+    csv_bytes = merged.to_csv(index=False).encode()
+    st.download_button("Download this data as CSV", csv_bytes, file_name="adhd_health_data.csv", mime="text/csv")
+
+    render_guess_game(theme, merged, metric_options)
+
 
 # ---------------------------------------------------------------------------
-# Tab 3: EEG Signals (Kaggle upload-driven)
+# Tab 3: EEG Signals (Kaggle upload, or synthetic sample)
 # ---------------------------------------------------------------------------
 # The international 10-20 electrode placement system -- these column names are
 # electrode positions on the scalp, not arbitrary labels.
@@ -330,7 +502,33 @@ EEG_CHANNEL_INFO = {
 }
 
 
+@st.cache_data
+def generate_sample_eeg_data():
+    """Synthetic demo EEG data -- sine waves + noise, NOT real brain activity.
+    Just enough structure (a few 'recordings' with different noisiness) to make
+    the waveform viewer and group comparison feel populated."""
+    rng = np.random.default_rng(7)
+    channels = list(EEG_CHANNEL_INFO.keys())
+    recordings = [("demo_adhd_1", "ADHD"), ("demo_adhd_2", "ADHD"), ("demo_control_1", "Control")]
+    n_samples = 800
+    t = np.arange(n_samples)
+
+    frames = []
+    for rec_id, cls in recordings:
+        noise_scale = 220 if cls == "ADHD" else 140  # purely illustrative, not a real finding
+        data = {}
+        for j, ch in enumerate(channels):
+            base = 80 * np.sin(2 * np.pi * t / 40 + j)
+            data[ch] = np.round(base + rng.normal(0, noise_scale, n_samples), 1)
+        d = pd.DataFrame(data)
+        d["Class"] = cls
+        d["ID"] = rec_id
+        frames.append(d)
+    return pd.concat(frames, ignore_index=True)
+
+
 def render_eeg_tab():
+    theme = get_theme()
     st.subheader("EEG Signals")
     st.caption("Dataset: Kaggle - 'EEG Dataset for ADHD' (raw EEG channel data, ADHD vs. control).")
 
@@ -341,12 +539,23 @@ def render_eeg_tab():
         "are raw voltage readings -- meaningful as a waveform over time, not as standalone numbers."
     )
     f = st.file_uploader("Upload an EEG CSV", type="csv", key="eeg_upload")
-    if f is None:
-        st.info("Once uploaded, you'll pick one recording and one channel to see its actual waveform, "
-                 "and optionally compare signal levels between ADHD and control recordings.")
+
+    st.markdown("**Don't have the file handy?**")
+    if st.button("Load synthetic sample data instead", key="eeg_sample_btn"):
+        st.session_state["eeg_sample_mode"] = True
+    use_sample = f is None and st.session_state.get("eeg_sample_mode", False)
+
+    if f is None and not use_sample:
+        st.info("Upload a file above, or click \"Load synthetic sample data\" to try this tab immediately.")
         return
 
-    df = pd.read_csv(f)
+    if use_sample:
+        st.info("Showing **synthetic demo EEG data** -- sine waves plus random noise, not real brain "
+                 "activity. Upload a real file above any time to replace it.")
+        df = generate_sample_eeg_data()
+    else:
+        df = pd.read_csv(f)
+
     st.success(f"Loaded {len(df):,} rows, {len(df.columns)} columns.")
     with st.expander("Preview data"):
         st.dataframe(df.head(50), use_container_width=True)
@@ -379,6 +588,7 @@ def render_eeg_tab():
     else:
         st.caption("No 'ID' column found -- treating the whole file as one continuous recording.")
         rec_df = df
+        rec = None
 
     channel = st.selectbox("Channel to plot", numeric_cols)
     ch_note = EEG_CHANNEL_INFO.get(channel)
@@ -388,10 +598,13 @@ def render_eeg_tab():
     max_samples = max(len(rec_df), 100)
     n_samples = st.slider("Samples to display", 100, min(5000, max_samples), min(1000, max_samples))
     d = rec_df[channel].iloc[:n_samples]
-    fig = go.Figure(go.Scatter(y=d, mode="lines", line=dict(color=BLUE, width=1)))
-    fig.update_layout(title=f"{channel} -- raw waveform, recording {rec if id_col else '(whole file)'}", **BASE_LAYOUT)
-    style_axes(fig)
+    fig = go.Figure(go.Scatter(y=d, mode="lines", line=dict(color=theme["BLUE"], width=1)))
+    fig.update_layout(title=f"{channel} -- raw waveform, recording {rec if id_col else '(whole file)'}", **theme["BASE_LAYOUT"])
+    style_axes(fig, theme)
     st.plotly_chart(fig, use_container_width=True)
+
+    rec_csv = rec_df.to_csv(index=False).encode()
+    st.download_button("Download this recording as CSV", rec_csv, file_name="eeg_recording.csv", mime="text/csv")
 
     st.divider()
     st.markdown("**Group comparison -- ADHD vs. control**")
@@ -409,9 +622,9 @@ def render_eeg_tab():
         fig = go.Figure()
         for i, g in enumerate(groups):
             fig.add_trace(go.Box(y=df.loc[df[group_col] == g, channel], name=str(g),
-                                  marker_color=CATEGORICAL[i % len(CATEGORICAL)]))
-        fig.update_layout(title=f"{channel} -- all samples, grouped by {group_col}", **BASE_LAYOUT)
-        style_axes(fig)
+                                  marker_color=theme["CATEGORICAL"][i % len(theme["CATEGORICAL"])]))
+        fig.update_layout(title=f"{channel} -- all samples, grouped by {group_col}", **theme["BASE_LAYOUT"])
+        style_axes(fig, theme)
         st.plotly_chart(fig, use_container_width=True)
 
     with st.expander("What do the electrode names mean?"):
@@ -435,12 +648,50 @@ Answer the user's question using ONLY the data and glossary provided below -- do
 use outside knowledge about ADHD beyond what's in the glossary, and do not make
 clinical or diagnostic claims. If the data provided doesn't contain the answer, say
 so plainly instead of guessing. You may use the glossary to explain what a metric or
-clinical scale means. Cite specific numbers from the data when you can. Keep answers
-concise (a few sentences, or a short list).
+clinical scale means. When the user asks to see, plot, chart, or compare something
+visually, use the show_chart tool instead of only describing it in words. Cite
+specific numbers from the data when you can. Keep answers concise (a few sentences,
+or a short list).
 
 DATA AVAILABLE:
 {context}
 """
+
+CHART_TOOL = {
+    "name": "show_chart",
+    "description": (
+        "Render a chart in the app so the user can see it. Use this whenever the user "
+        "asks to see, plot, chart, compare, or visualize a metric, instead of only "
+        "describing it in words."
+    ),
+    "input_schema": {
+        "type": "object",
+        "properties": {
+            "source": {
+                "type": "string",
+                "enum": ["prevalence", "health"],
+                "description": "'prevalence' for national CDC/NSCH demographic charts, "
+                                "'health' for the loaded adult ADHD-vs-control comparison data.",
+            },
+            "metric": {
+                "type": "string",
+                "description": (
+                    "For source='prevalence': one of sex, race_ethnicity, severity, co_occurring. "
+                    "For source='health': the exact column name of a metric shown in the health "
+                    "data table (e.g. ASRS, ACC__mean, 'Adhd TScore Omissions')."
+                ),
+            },
+        },
+        "required": ["source", "metric"],
+    },
+}
+
+SUGGESTED_QUESTIONS = [
+    "What's the ADHD diagnosis rate by sex?",
+    "Which treatment type varies most across states?",
+    "Compare ASRS scores between ADHD and control",
+    "What does WURS measure?",
+]
 
 
 def build_data_context() -> str:
@@ -459,31 +710,60 @@ def build_data_context() -> str:
     if merged is not None:
         cols = ["ID", "Group"] + [c for c in st.session_state.get("health_metric_options", {}).values()]
         cols = [c for c in dict.fromkeys(cols) if c in merged.columns]
+        note = " (synthetic sample data, not real patients)" if st.session_state.get("health_is_sample") else " (uploaded by user)"
         parts.append(
-            "## Adult health/activity data (HYPERAKTIV, uploaded by user)\n"
+            f"## Adult health/activity data{note}\n"
             f"{len(merged)} matched patients. Group counts: "
             f"{merged['Group'].value_counts().to_dict()}\n\n"
             + merged[cols].to_markdown(index=False)
         )
     else:
-        parts.append("## Adult health/activity data\nNot uploaded yet in the Adult Health & Activity tab.")
+        parts.append("## Adult health/activity data\nNot loaded yet in the Adult Health & Activity tab.")
 
     eeg_info = st.session_state.get("eeg_info")
     if eeg_info is not None:
         parts.append(
             "## EEG data\n"
-            f"An EEG file was uploaded with {eeg_info['rows']} rows and columns: "
+            f"An EEG file was loaded with {eeg_info['rows']} rows and columns: "
             f"{eeg_info['columns']}. (Raw signal values are not included here -- too large.)"
         )
     else:
-        parts.append("## EEG data\nNot uploaded yet in the EEG Signals tab.")
+        parts.append("## EEG data\nNot loaded yet in the EEG Signals tab.")
 
     return "\n\n".join(parts)
 
 
+def execute_chart_tool(theme, tool_input):
+    """Returns (plotly figure or None, short text result for the model to see)."""
+    source = tool_input.get("source")
+    metric = tool_input.get("metric")
+
+    if source == "prevalence":
+        if metric not in PREVALENCE_TITLES:
+            return None, f"Unknown prevalence category '{metric}'. Valid options: {list(PREVALENCE_TITLES.keys())}."
+        prevalence = load_prevalence()
+        d = prevalence[prevalence.category == metric]
+        fig = prevalence_bar_chart(theme, d, PREVALENCE_TITLES[metric])
+        return fig, f"Rendered a bar chart: {PREVALENCE_TITLES[metric]}."
+
+    if source == "health":
+        merged = st.session_state.get("health_merged")
+        metric_options = st.session_state.get("health_metric_options", {})
+        if merged is None:
+            return None, "No health data is loaded -- tell the user to upload files or load sample data in the Adult Health & Activity tab."
+        if metric not in metric_options.values():
+            return None, f"'{metric}' isn't an available health metric. Available: {sorted(set(metric_options.values()))}."
+        label = next(k for k, v in metric_options.items() if v == metric)
+        fig = health_box_plot(theme, merged, metric, label)
+        return fig, f"Rendered a box plot comparing '{metric}' between ADHD and Control."
+
+    return None, f"Unknown chart source '{source}'."
+
+
 def render_chat_tab():
     st.subheader("Chat with the Data")
-    st.caption("Ask questions in plain English -- the assistant answers using the data currently loaded in this app.")
+    st.caption("Ask questions in plain English -- the assistant answers using the data currently loaded "
+               "in this app, and can draw charts on request.")
 
     if not ANTHROPIC_AVAILABLE:
         st.error("The `anthropic` package isn't installed. Add `anthropic` to requirements.txt and redeploy.")
@@ -507,11 +787,21 @@ def render_chat_tab():
     col1, col2 = st.columns([5, 1])
     col2.button("Clear chat", on_click=lambda: st.session_state.update(chat_messages=[]))
 
-    for msg in st.session_state.chat_messages:
+    if not st.session_state.chat_messages:
+        st.markdown("**Try asking:**")
+        chip_cols = st.columns(len(SUGGESTED_QUESTIONS))
+        for i, q in enumerate(SUGGESTED_QUESTIONS):
+            if chip_cols[i].button(q, key=f"chip_{i}"):
+                st.session_state["chat_pending"] = q
+
+    for idx, msg in enumerate(st.session_state.chat_messages):
         with st.chat_message(msg["role"]):
             st.markdown(msg["content"])
+            if msg.get("fig") is not None:
+                st.plotly_chart(msg["fig"], use_container_width=True, key=f"hist_chart_{idx}")
 
-    prompt = st.chat_input("e.g. Which treatment type varies most across states?")
+    typed = st.chat_input("e.g. Which treatment type varies most across states?")
+    prompt = typed or st.session_state.pop("chat_pending", None)
     if not prompt:
         return
 
@@ -519,34 +809,81 @@ def render_chat_tab():
     with st.chat_message("user"):
         st.markdown(prompt)
 
+    theme = get_theme()
     context = build_data_context()
     system = CHAT_SYSTEM_PROMPT.format(context=context)
-
-    # Only send recent turns to keep token usage (and cost) bounded.
+    # Only send recent turns (as plain text) to keep token usage bounded.
     recent = st.session_state.chat_messages[-10:]
+    api_messages = [{"role": m["role"], "content": m["content"]} for m in recent]
 
+    fig = None
+    answer = ""
     with st.chat_message("assistant"):
         try:
             client = anthropic.Anthropic(api_key=api_key)
             response = client.messages.create(
-                model="claude-haiku-4-5",
-                max_tokens=600,
-                system=system,
-                messages=[{"role": m["role"], "content": m["content"]} for m in recent],
+                model="claude-haiku-4-5", max_tokens=600, system=system,
+                tools=[CHART_TOOL], messages=api_messages,
             )
-            answer = response.content[0].text
+            answer = "\n".join(b.text for b in response.content if b.type == "text").strip()
+
+            tool_use = next((b for b in response.content if b.type == "tool_use"), None)
+            if tool_use is not None:
+                fig, result_text = execute_chart_tool(theme, tool_use.input)
+                api_messages.append({"role": "assistant", "content": response.content})
+                api_messages.append({
+                    "role": "user",
+                    "content": [{"type": "tool_result", "tool_use_id": tool_use.id, "content": result_text}],
+                })
+                response2 = client.messages.create(
+                    model="claude-haiku-4-5", max_tokens=400, system=system,
+                    tools=[CHART_TOOL], messages=api_messages,
+                )
+                follow_up = "\n".join(b.text for b in response2.content if b.type == "text").strip()
+                answer = (answer + "\n\n" + follow_up).strip() if answer else follow_up
+
+            if not answer:
+                answer = "Here's what I found:" if fig is not None else "I don't have enough loaded data to answer that."
         except Exception as e:
             answer = f"Something went wrong calling the AI: {e}"
-        st.markdown(answer)
 
-    st.session_state.chat_messages.append({"role": "assistant", "content": answer})
+        st.markdown(answer)
+        if fig is not None:
+            st.plotly_chart(fig, use_container_width=True)
+
+    st.session_state.chat_messages.append({"role": "assistant", "content": answer, "fig": fig})
 
 
 # ---------------------------------------------------------------------------
 # App shell
 # ---------------------------------------------------------------------------
 st.set_page_config(page_title="ADHD Data Explorer", layout="wide")
+
+with st.sidebar:
+    st.header("ADHD Data Explorer")
+    st.toggle("Dark mode", key="dark_mode")
+    st.divider()
+    st.write(
+        "Explore ADHD prevalence, adult health/activity data, and EEG signals -- "
+        "or chat with an AI about whatever's currently loaded."
+    )
+    st.caption("Educational/exploratory tool -- not a diagnostic instrument.")
+
 st.title("ADHD Data Explorer")
+
+_first_visit = "seen_intro" not in st.session_state
+st.session_state["seen_intro"] = True
+with st.expander("About this app", expanded=_first_visit):
+    st.markdown(
+        "This app explores public and research ADHD data across four tabs:\n\n"
+        "- **Prevalence & Demographics** -- national CDC/NSCH statistics, works immediately, no download needed\n"
+        "- **Adult Health & Activity** -- real clinical research data (HYPERAKTIV) comparing ADHD-diagnosed "
+        "adults to controls, or synthetic sample data if you don't have the files\n"
+        "- **EEG Signals** -- raw brain-electrical-activity waveforms, real or synthetic sample data\n"
+        "- **Chat with the Data** -- ask an AI questions about whatever's loaded; it can draw charts too\n\n"
+        "This app is for exploratory and educational purposes only -- it is **not a diagnostic tool**, "
+        "and nothing here should be used to draw clinical conclusions."
+    )
 
 tab1, tab2, tab3, tab4 = st.tabs(
     ["Prevalence & Demographics", "Adult Health & Activity", "EEG Signals", "Chat with the Data"]
@@ -561,7 +898,4 @@ with tab4:
     render_chat_tab()
 
 st.divider()
-st.caption(
-    "This app is for exploratory / educational purposes only and is not a diagnostic tool. "
-    "Prevalence figures: CDC / NSCH 2022-2023."
-)
+st.caption("Not a diagnostic tool. Prevalence figures: CDC / NSCH 2022-2023.")
