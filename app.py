@@ -156,16 +156,16 @@ def render_prevalence_tab():
     col1, col2 = st.columns(2)
     with col1:
         d = prevalence[prevalence.category == "sex"]
-        st.plotly_chart(prevalence_bar_chart(theme, d, PREVALENCE_TITLES["sex"]), use_container_width=True)
+        st.plotly_chart(prevalence_bar_chart(theme, d, PREVALENCE_TITLES["sex"]), use_container_width=True, key="prevalence_sex_chart")
     with col2:
         d = prevalence[prevalence.category == "severity"]
-        st.plotly_chart(prevalence_bar_chart(theme, d, PREVALENCE_TITLES["severity"]), use_container_width=True)
+        st.plotly_chart(prevalence_bar_chart(theme, d, PREVALENCE_TITLES["severity"]), use_container_width=True, key="prevalence_severity_chart")
 
     d = prevalence[prevalence.category == "race_ethnicity"]
-    st.plotly_chart(prevalence_bar_chart(theme, d, PREVALENCE_TITLES["race_ethnicity"]), use_container_width=True)
+    st.plotly_chart(prevalence_bar_chart(theme, d, PREVALENCE_TITLES["race_ethnicity"]), use_container_width=True, key="prevalence_race_chart")
 
     d = prevalence[prevalence.category == "co_occurring"]
-    st.plotly_chart(prevalence_bar_chart(theme, d, PREVALENCE_TITLES["co_occurring"]), use_container_width=True)
+    st.plotly_chart(prevalence_bar_chart(theme, d, PREVALENCE_TITLES["co_occurring"]), use_container_width=True, key="prevalence_co_occurring_chart")
 
     st.divider()
     st.markdown("**Treatment received -- how much it varies state to state**")
@@ -185,7 +185,7 @@ def render_prevalence_tab():
     fig.update_layout(title="Treatment rate range across states (2022)", height=260, **theme["BASE_LAYOUT"])
     style_axes(fig, theme)
     fig.update_xaxes(ticksuffix="%", range=[0, 100])
-    st.plotly_chart(fig, use_container_width=True)
+    st.plotly_chart(fig, use_container_width=True, key="prevalence_treatment_range_chart")
     st.caption("Orange marker = lowest-treating state's rate, blue marker = highest-treating state's rate, for that treatment type.")
 
     with st.expander("View underlying data"):
@@ -206,7 +206,7 @@ def render_prevalence_tab():
     )
     state_df = load_state_treatment()
     fig = state_choropleth_chart(theme, state_df)
-    st.plotly_chart(fig, use_container_width=True)
+    st.plotly_chart(fig, use_container_width=True, key="prevalence_state_map_chart")
     st.caption(
         f"Highest: {state_df.loc[state_df.rate_pct.idxmax(), 'state_name']} "
         f"({state_df.rate_pct.max():g}%) -- Lowest: {state_df.loc[state_df.rate_pct.idxmin(), 'state_name']} "
@@ -227,7 +227,7 @@ def render_prevalence_tab():
             custom_df = pd.read_csv(custom_file)
             fig = state_choropleth_chart(theme, custom_df, z_col="rate", label_col="state",
                                           title="Custom state-level map", colorbar_title="Rate")
-            st.plotly_chart(fig, use_container_width=True)
+            st.plotly_chart(fig, use_container_width=True, key="prevalence_state_map_custom_chart")
 
 
 # ---------------------------------------------------------------------------
@@ -379,7 +379,7 @@ def render_guess_game(theme, merged, metric_options):
                           name="Group B", marker_color=theme["CATEGORICAL"][1], boxmean=True))
     fig.update_layout(title="Mystery metric -- Group A vs. Group B", **theme["BASE_LAYOUT"])
     style_axes(fig, theme)
-    st.plotly_chart(fig, use_container_width=True)
+    st.plotly_chart(fig, use_container_width=True, key="game_chart")
 
     correct_letter = "A" if a_group == "ADHD" else "B"
 
@@ -501,7 +501,7 @@ def render_health_tab():
     metric_col = metric_options[label]
 
     fig = health_box_plot(theme, merged, metric_col, label)
-    st.plotly_chart(fig, use_container_width=True)
+    st.plotly_chart(fig, use_container_width=True, key="health_metric_chart")
 
     info = METRIC_INFO.get(metric_col)
     if info:
@@ -644,7 +644,7 @@ def render_eeg_tab():
     fig = go.Figure(go.Scatter(y=d, mode="lines", line=dict(color=theme["BLUE"], width=1)))
     fig.update_layout(title=f"{channel} -- raw waveform, recording {rec if id_col else '(whole file)'}", **theme["BASE_LAYOUT"])
     style_axes(fig, theme)
-    st.plotly_chart(fig, use_container_width=True)
+    st.plotly_chart(fig, use_container_width=True, key="eeg_waveform_chart")
 
     rec_csv = rec_df.to_csv(index=False).encode()
     st.download_button("Download this recording as CSV", rec_csv, file_name="eeg_recording.csv", mime="text/csv")
@@ -668,7 +668,7 @@ def render_eeg_tab():
                                   marker_color=theme["CATEGORICAL"][i % len(theme["CATEGORICAL"])]))
         fig.update_layout(title=f"{channel} -- all samples, grouped by {group_col}", **theme["BASE_LAYOUT"])
         style_axes(fig, theme)
-        st.plotly_chart(fig, use_container_width=True)
+        st.plotly_chart(fig, use_container_width=True, key="eeg_group_chart")
 
     with st.expander("What do the electrode names mean?"):
         st.write(
@@ -910,7 +910,7 @@ def render_chat_tab():
 
         st.markdown(answer)
         if fig is not None:
-            st.plotly_chart(fig, use_container_width=True)
+            st.plotly_chart(fig, use_container_width=True, key=f"chat_live_chart_{len(st.session_state.chat_messages)}")
 
     st.session_state.chat_messages.append({"role": "assistant", "content": answer, "fig": fig})
 
