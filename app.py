@@ -68,6 +68,364 @@ def style_axes(fig, theme, x_grid=False, y_grid=True):
 
 
 # ---------------------------------------------------------------------------
+# Custom UI polish -- CSS injected once per rerun, theme-aware. Purely
+# cosmetic: targets Streamlit's public data-testid hooks so app logic and
+# element keys are untouched if a selector ever stops matching.
+# ---------------------------------------------------------------------------
+def custom_css(theme):
+    is_dark = theme["SURFACE"] == PALETTES["dark"]["SURFACE"]
+    card_shadow = (
+        "0 1px 3px rgba(0,0,0,0.35), 0 1px 2px rgba(0,0,0,0.4)"
+        if is_dark else
+        "0 1px 3px rgba(20,20,15,0.08), 0 1px 2px rgba(20,20,15,0.06)"
+    )
+    glow = f"0 0 0 1px rgba(42,120,214,0.25), 0 10px 30px rgba(42,120,214,0.35)" if not is_dark else \
+           f"0 0 0 1px rgba(57,135,229,0.35), 0 10px 30px rgba(57,135,229,0.45)"
+    card_bg = "rgba(35,35,34,0.72)" if is_dark else "rgba(255,255,255,0.78)"
+    mesh_opacity = "0.55" if is_dark else "0.35"
+    return f"""
+    <style>
+    @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800;900&display=swap');
+
+    html, body, [class*="css"] {{
+        font-family: 'Inter', -apple-system, 'Segoe UI', sans-serif;
+    }}
+
+    /* Subtle animated gradient mesh drifting behind the content */
+    .main .block-container {{
+        animation: adhd-fade-in 0.45s ease-out;
+        padding-top: 1.4rem;
+        position: relative;
+    }}
+    .main .block-container::before {{
+        content: "";
+        position: fixed;
+        inset: 0;
+        z-index: -1;
+        opacity: {mesh_opacity};
+        background:
+            radial-gradient(circle at 12% 8%, {theme['BLUE']}33 0%, transparent 38%),
+            radial-gradient(circle at 88% 15%, {theme['VIOLET']}33 0%, transparent 40%),
+            radial-gradient(circle at 50% 95%, {theme['AQUA']}22 0%, transparent 45%);
+        background-size: 180% 180%;
+        animation: adhd-mesh-drift 22s ease-in-out infinite;
+        pointer-events: none;
+    }}
+    @keyframes adhd-mesh-drift {{
+        0%   {{ background-position: 0% 0%; }}
+        50%  {{ background-position: 100% 60%; }}
+        100% {{ background-position: 0% 0%; }}
+    }}
+    @keyframes adhd-fade-in {{
+        from {{ opacity: 0; transform: translateY(8px); }}
+        to {{ opacity: 1; transform: translateY(0); }}
+    }}
+    @keyframes adhd-pop-in {{
+        from {{ opacity: 0; transform: scale(0.92) translateY(8px); }}
+        to {{ opacity: 1; transform: scale(1) translateY(0); }}
+    }}
+    @keyframes adhd-float {{
+        0%, 100% {{ transform: translateY(0) rotate(0deg); }}
+        50% {{ transform: translateY(-6px) rotate(-4deg); }}
+    }}
+    @keyframes adhd-shimmer {{
+        0%   {{ background-position: 0% 50%; }}
+        50%  {{ background-position: 100% 50%; }}
+        100% {{ background-position: 0% 50%; }}
+    }}
+
+    /* Hero banner -- animated moving gradient */
+    .adhd-hero {{
+        display: flex;
+        align-items: center;
+        gap: 20px;
+        padding: 30px 34px;
+        border-radius: 20px;
+        margin-bottom: 6px;
+        background: linear-gradient(120deg, {theme['BLUE']} 0%, {theme['VIOLET']} 45%, {theme['AQUA']} 80%, {theme['BLUE']} 100%);
+        background-size: 300% 300%;
+        animation: adhd-shimmer 9s ease-in-out infinite;
+        box-shadow: {glow};
+        position: relative;
+        overflow: hidden;
+    }}
+    .adhd-hero-icon {{
+        font-size: 48px;
+        line-height: 1;
+        animation: adhd-float 4s ease-in-out infinite;
+        filter: drop-shadow(0 4px 10px rgba(0,0,0,0.25));
+    }}
+    .adhd-hero-title {{
+        color: #ffffff;
+        font-size: 32px;
+        font-weight: 900;
+        letter-spacing: -0.02em;
+        margin: 0;
+        text-shadow: 0 2px 12px rgba(0,0,0,0.15);
+    }}
+    .adhd-hero-sub {{
+        color: rgba(255,255,255,0.92);
+        font-size: 15.5px;
+        font-weight: 500;
+        margin-top: 5px;
+    }}
+    .adhd-badge-row {{
+        display: flex; flex-wrap: wrap; gap: 8px;
+        margin: 16px 0 4px 0;
+    }}
+    .adhd-badge {{
+        display: inline-block;
+        padding: 6px 15px;
+        border-radius: 999px;
+        font-size: 12.5px;
+        font-weight: 700;
+        background: {card_bg};
+        backdrop-filter: blur(10px);
+        color: {theme['SECONDARY_INK']};
+        border: 1px solid {theme['GRIDLINE']};
+        box-shadow: {card_shadow};
+        opacity: 0;
+        animation: adhd-pop-in 0.4s ease-out forwards;
+        transition: transform 0.15s ease, box-shadow 0.15s ease;
+    }}
+    .adhd-badge:hover {{
+        transform: translateY(-2px) scale(1.04);
+        box-shadow: {glow};
+    }}
+    .adhd-badge-row .adhd-badge:nth-child(1) {{ animation-delay: 0.05s; }}
+    .adhd-badge-row .adhd-badge:nth-child(2) {{ animation-delay: 0.15s; }}
+    .adhd-badge-row .adhd-badge:nth-child(3) {{ animation-delay: 0.25s; }}
+    .adhd-badge-row .adhd-badge:nth-child(4) {{ animation-delay: 0.35s; }}
+
+    /* Section headings get a gradient accent bar */
+    .main h2, .main h3 {{
+        font-weight: 800 !important;
+        letter-spacing: -0.01em;
+        padding-left: 14px;
+        border-left: 5px solid transparent;
+        border-image: linear-gradient(180deg, {theme['BLUE']}, {theme['VIOLET']}) 1;
+    }}
+
+    /* Dividers -> soft gradient line instead of a flat rule */
+    .main hr {{
+        border: none;
+        height: 3px;
+        border-radius: 3px;
+        background: linear-gradient(90deg, {theme['BLUE']}, {theme['VIOLET']}, transparent);
+        opacity: 0.7;
+        margin: 1.2rem 0;
+    }}
+
+    /* Tabs -> glowing pill style */
+    .stTabs [data-baseweb="tab-list"] {{
+        gap: 6px;
+        background: {card_bg};
+        backdrop-filter: blur(10px);
+        padding: 7px;
+        border-radius: 16px;
+        border: 1px solid {theme['GRIDLINE']};
+        box-shadow: {card_shadow};
+    }}
+    .stTabs [data-baseweb="tab"] {{
+        border-radius: 11px;
+        padding: 9px 20px;
+        font-weight: 700;
+        color: {theme['SECONDARY_INK']};
+        transition: all 0.15s ease;
+    }}
+    .stTabs [data-baseweb="tab"]:hover {{
+        background: {theme['GRIDLINE']}55;
+    }}
+    .stTabs [aria-selected="true"] {{
+        background: linear-gradient(120deg, {theme['BLUE']}, {theme['VIOLET']}) !important;
+        color: #ffffff !important;
+        box-shadow: {glow};
+    }}
+
+    /* Metric cards -- glassy with hover glow + staggered pop-in */
+    [data-testid="stMetric"] {{
+        background: {card_bg};
+        backdrop-filter: blur(10px);
+        border: 1px solid {theme['GRIDLINE']};
+        border-top: 3px solid {theme['BLUE']};
+        border-radius: 14px;
+        padding: 16px 18px 12px 18px;
+        box-shadow: {card_shadow};
+        opacity: 0;
+        animation: adhd-pop-in 0.45s ease-out forwards;
+        transition: transform 0.18s ease, box-shadow 0.18s ease;
+    }}
+    [data-testid="stMetric"]:hover {{
+        transform: translateY(-3px);
+        box-shadow: {glow};
+    }}
+    [data-testid="stMetricValue"] {{
+        font-weight: 800 !important;
+        background: linear-gradient(120deg, {theme['BLUE']}, {theme['VIOLET']});
+        -webkit-background-clip: text;
+        -webkit-text-fill-color: transparent;
+        background-clip: text;
+    }}
+
+    /* Buttons */
+    .stButton > button, .stDownloadButton > button {{
+        border-radius: 11px;
+        border: 1px solid {theme['BLUE']};
+        font-weight: 700;
+        transition: transform 0.12s ease, box-shadow 0.12s ease;
+    }}
+    .stButton > button:hover, .stDownloadButton > button:hover {{
+        transform: translateY(-2px) scale(1.01);
+        box-shadow: {glow};
+        border-color: {theme['VIOLET']};
+    }}
+
+    /* Expanders */
+    [data-testid="stExpander"] {{
+        border-radius: 14px;
+        border: 1px solid {theme['GRIDLINE']};
+        box-shadow: {card_shadow};
+        overflow: hidden;
+        transition: box-shadow 0.15s ease;
+    }}
+    [data-testid="stExpander"]:hover {{
+        box-shadow: {glow};
+    }}
+
+    /* Sidebar */
+    [data-testid="stSidebar"] {{
+        border-right: 1px solid {theme['GRIDLINE']};
+        background: linear-gradient(180deg, {theme['BLUE']}0d 0%, transparent 25%);
+    }}
+
+    /* Chat bubbles */
+    [data-testid="stChatMessage"] {{
+        border-radius: 16px;
+        border: 1px solid {theme['GRIDLINE']};
+        box-shadow: {card_shadow};
+        transition: box-shadow 0.15s ease;
+    }}
+    [data-testid="stChatMessage"]:hover {{
+        box-shadow: {glow};
+    }}
+
+    /* Custom scrollbar */
+    ::-webkit-scrollbar {{ width: 10px; height: 10px; }}
+    ::-webkit-scrollbar-track {{ background: transparent; }}
+    ::-webkit-scrollbar-thumb {{
+        background: linear-gradient(180deg, {theme['BLUE']}, {theme['VIOLET']});
+        border-radius: 8px;
+    }}
+
+    footer, #MainMenu {{ visibility: hidden; }}
+    </style>
+    """
+
+
+def render_hero():
+    st.markdown(
+        """
+        <div class="adhd-hero">
+            <div class="adhd-hero-icon">🧠</div>
+            <div>
+                <p class="adhd-hero-title">ADHD Data Explorer</p>
+                <p class="adhd-hero-sub">Real CDC prevalence data, a real clinical study, real EEG signals -- and an AI you can chat with.</p>
+            </div>
+        </div>
+        <div class="adhd-badge-row">
+            <span class="adhd-badge">📊 CDC / NSCH Data</span>
+            <span class="adhd-badge">🩺 Clinical Study (HYPERAKTIV)</span>
+            <span class="adhd-badge">🌊 Real EEG Recordings</span>
+            <span class="adhd-badge">💬 AI Chat</span>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+
+
+def animated_stat_row(theme, stats, height=168):
+    """Renders a row of glassy stat cards with count-up numbers via an
+    isolated HTML/JS component -- purely decorative, doesn't touch any
+    st.session_state or widget the rest of the app depends on."""
+    is_dark = theme["SURFACE"] == PALETTES["dark"]["SURFACE"]
+    text_color = "#f5f5f4" if is_dark else "#0b0b0b"
+    sub_color = theme["MUTED_INK"]
+    card_bg = "rgba(255,255,255,0.06)" if is_dark else "rgba(255,255,255,0.9)"
+    border_color = theme["GRIDLINE"]
+
+    cards_html = ""
+    for i, s in enumerate(stats):
+        cards_html += f"""
+        <div class="stat-card" style="animation-delay:{i * 0.12}s">
+            <div class="stat-icon">{s.get('icon', '📈')}</div>
+            <div class="stat-value" data-target="{s['value']}" data-decimals="{s.get('decimals', 0)}" data-suffix="{s.get('suffix', '')}">0{s.get('suffix', '')}</div>
+            <div class="stat-label">{s['label']}</div>
+            <div class="stat-help">{s.get('help', '')}</div>
+        </div>
+        """
+
+    html = f"""
+    <html>
+    <head>
+    <style>
+        * {{ box-sizing: border-box; }}
+        body {{
+            margin: 0; padding: 4px 0;
+            font-family: 'Inter', -apple-system, 'Segoe UI', sans-serif;
+            background: transparent;
+        }}
+        .stat-row {{ display: flex; gap: 14px; flex-wrap: wrap; }}
+        .stat-card {{
+            flex: 1; min-width: 160px;
+            background: {card_bg};
+            border: 1px solid {border_color};
+            border-top: 3px solid {theme['BLUE']};
+            border-radius: 14px;
+            padding: 16px 18px;
+            backdrop-filter: blur(8px);
+            opacity: 0;
+            animation: popIn 0.5s ease-out forwards;
+            transition: transform 0.18s ease, box-shadow 0.18s ease;
+        }}
+        .stat-card:hover {{ transform: translateY(-4px); box-shadow: 0 10px 26px rgba(42,120,214,0.35); }}
+        .stat-icon {{ font-size: 22px; margin-bottom: 4px; }}
+        .stat-value {{
+            font-size: 30px; font-weight: 800;
+            background: linear-gradient(120deg, {theme['BLUE']}, {theme['VIOLET']});
+            -webkit-background-clip: text; -webkit-text-fill-color: transparent; background-clip: text;
+        }}
+        .stat-label {{ font-size: 13.5px; font-weight: 600; color: {text_color}; margin-top: 2px; }}
+        .stat-help {{ font-size: 11.5px; color: {sub_color}; margin-top: 3px; }}
+        @keyframes popIn {{ from {{ opacity: 0; transform: scale(0.9) translateY(10px); }} to {{ opacity: 1; transform: scale(1) translateY(0); }} }}
+    </style>
+    </head>
+    <body>
+        <div class="stat-row">{cards_html}</div>
+        <script>
+            function countUp(el) {{
+                const target = parseFloat(el.dataset.target);
+                const decimals = parseInt(el.dataset.decimals, 10);
+                const suffix = el.dataset.suffix || '';
+                const duration = 1200;
+                let start = null;
+                function step(ts) {{
+                    if (!start) start = ts;
+                    const progress = Math.min((ts - start) / duration, 1);
+                    const eased = 1 - Math.pow(1 - progress, 3);
+                    el.textContent = (target * eased).toFixed(decimals) + suffix;
+                    if (progress < 1) requestAnimationFrame(step);
+                }}
+                requestAnimationFrame(step);
+            }}
+            document.querySelectorAll('.stat-value').forEach(countUp);
+        </script>
+    </body>
+    </html>
+    """
+    st.components.v1.html(html, height=height, scrolling=False)
+
+
+# ---------------------------------------------------------------------------
 # Data loading
 # ---------------------------------------------------------------------------
 @st.cache_data
@@ -145,10 +503,17 @@ def render_prevalence_tab():
     st.subheader("ADHD Prevalence & Demographics")
     st.caption("Source: CDC / National Survey of Children's Health (NSCH), 2022-2023, U.S. children ages 3-17.")
 
-    c1, c2, c3 = st.columns(3)
-    c1.metric("Children currently diagnosed", "11.7%", help="~7 million U.S. children ages 3-17 (2022-2023 NSCH)")
-    c2.metric("Have a co-occurring condition", "78%", help="Among children with a current ADHD diagnosis")
-    c3.metric("Moderate or severe cases", "60%", help="Among children with a current ADHD diagnosis")
+    animated_stat_row(
+        theme,
+        [
+            {"icon": "🧒", "label": "Children currently diagnosed", "value": 11.7, "decimals": 1, "suffix": "%",
+             "help": "~7 million U.S. children ages 3-17 (2022-2023 NSCH)"},
+            {"icon": "🔗", "label": "Have a co-occurring condition", "value": 78, "decimals": 0, "suffix": "%",
+             "help": "Among children with a current ADHD diagnosis"},
+            {"icon": "⚠️", "label": "Moderate or severe cases", "value": 60, "decimals": 0, "suffix": "%",
+             "help": "Among children with a current ADHD diagnosis"},
+        ],
+    )
 
     st.divider()
     prevalence = load_prevalence()
@@ -918,11 +1283,11 @@ def render_chat_tab():
 # ---------------------------------------------------------------------------
 # App shell
 # ---------------------------------------------------------------------------
-st.set_page_config(page_title="ADHD Data Explorer", layout="wide")
+st.set_page_config(page_title="ADHD Data Explorer", page_icon="🧠", layout="wide")
 
 with st.sidebar:
-    st.header("ADHD Data Explorer")
-    st.toggle("Dark mode", key="dark_mode")
+    st.markdown("### 🧠 ADHD Data Explorer")
+    st.toggle("🌙 Dark mode", key="dark_mode")
     st.divider()
     st.write(
         "Explore ADHD prevalence, adult health/activity data, and EEG signals -- "
@@ -930,24 +1295,25 @@ with st.sidebar:
     )
     st.caption("Educational/exploratory tool -- not a diagnostic instrument.")
 
-st.title("ADHD Data Explorer")
+st.markdown(custom_css(get_theme()), unsafe_allow_html=True)
+render_hero()
 
 _first_visit = "seen_intro" not in st.session_state
 st.session_state["seen_intro"] = True
-with st.expander("About this app", expanded=_first_visit):
+with st.expander("ℹ️ About this app", expanded=_first_visit):
     st.markdown(
         "This app explores public and research ADHD data across four tabs:\n\n"
-        "- **Prevalence & Demographics** -- national CDC/NSCH statistics, works immediately, no download needed\n"
-        "- **Adult Health & Activity** -- real clinical research data (HYPERAKTIV) comparing ADHD-diagnosed "
+        "- **📊 Prevalence & Demographics** -- national CDC/NSCH statistics, works immediately, no download needed\n"
+        "- **🩺 Adult Health & Activity** -- real clinical research data (HYPERAKTIV) comparing ADHD-diagnosed "
         "adults to controls, or synthetic sample data if you don't have the files\n"
-        "- **EEG Signals** -- raw brain-electrical-activity waveforms, real or synthetic sample data\n"
-        "- **Chat with the Data** -- ask an AI questions about whatever's loaded; it can draw charts too\n\n"
+        "- **🌊 EEG Signals** -- raw brain-electrical-activity waveforms, real or synthetic sample data\n"
+        "- **💬 Chat with the Data** -- ask an AI questions about whatever's loaded; it can draw charts too\n\n"
         "This app is for exploratory and educational purposes only -- it is **not a diagnostic tool**, "
         "and nothing here should be used to draw clinical conclusions."
     )
 
 tab1, tab2, tab3, tab4 = st.tabs(
-    ["Prevalence & Demographics", "Adult Health & Activity", "EEG Signals", "Chat with the Data"]
+    ["📊 Prevalence & Demographics", "🩺 Adult Health & Activity", "🌊 EEG Signals", "💬 Chat with the Data"]
 )
 with tab1:
     render_prevalence_tab()
